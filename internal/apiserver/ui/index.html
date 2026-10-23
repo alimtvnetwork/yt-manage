@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yt-manage</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>yt-manage</h1>
+  <nav class="tabs" id="tabs">
+    <button class="tab is-active" data-section="videos">Videos</button>
+    <button class="tab" data-section="episodes">Episodes</button>
+    <button class="tab" data-section="playlists">Playlists</button>
+    <button class="tab" data-section="abtests">A/B Tests</button>
+    <button class="tab" data-section="accounts">Accounts</button>
+  </nav>
+</header>
+
+<main>
+  <section id="section-videos" class="panel is-active">
+    <div class="toolbar">
+      <input id="video-q" type="search" placeholder="Search titles and descriptions">
+      <input id="video-channel" type="number" min="1" placeholder="Channel ID">
+      <select id="video-visibility">
+        <option value="">Any visibility</option>
+        <option value="public">public</option>
+        <option value="unlisted">unlisted</option>
+        <option value="private">private</option>
+        <option value="scheduled">scheduled</option>
+        <option value="draft">draft</option>
+      </select>
+      <button id="video-search-btn" class="primary">Search</button>
+      <input id="pattern-finder" type="text" placeholder="Pattern finder (regex highlight)">
+    </div>
+    <div class="status-line" id="video-status"></div>
+    <div class="bulkbar">
+      <input id="bulk-template" type="text" placeholder="Template, e.g. {title} #{n}">
+      <input id="bulk-regex" type="text" placeholder="Regex">
+      <input id="bulk-replacement" type="text" placeholder="Replacement">
+      <input id="bulk-desc-template" type="text" placeholder="Description template">
+      <input id="bulk-start" type="number" value="1" class="narrow" title="Start index">
+      <button id="bulk-plan-btn">Plan bulk edit</button>
+    </div>
+    <div id="bulk-plan" class="plan-box hidden">
+      <pre id="bulk-summary"></pre>
+      <table class="grid">
+        <thead><tr><th>YT ID</th><th>Old title</th><th>New title</th><th>Description</th></tr></thead>
+        <tbody id="bulk-changes"></tbody>
+      </table>
+      <button id="bulk-apply-btn" class="primary">Apply plan</button>
+    </div>
+    <table class="grid" id="video-table">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="video-select-all"></th>
+          <th>ID</th><th>Title</th><th>Visibility</th><th>Views</th><th>Published</th>
+        </tr>
+      </thead>
+      <tbody id="video-rows"></tbody>
+    </table>
+    <form id="video-edit-form" class="card hidden">
+      <h2>Edit video <span id="edit-video-id"></span></h2>
+      <label>Title <input id="edit-title" type="text"></label>
+      <label>Description <textarea id="edit-description" rows="4"></textarea></label>
+      <div class="row">
+        <button type="submit" class="primary">Save via YouTube API</button>
+        <button type="button" id="edit-cancel">Cancel</button>
+      </div>
+      <div class="status-line" id="edit-status"></div>
+    </form>
+  </section>
+
+  <section id="section-episodes" class="panel">
+    <div class="toolbar">
+      <input id="episode-channel" type="number" min="1" placeholder="Channel ID">
+      <button id="episode-load-btn" class="primary">Load episodes</button>
+    </div>
+    <div class="status-line" id="episode-status"></div>
+    <div id="episode-list"></div>
+    <form id="schedule-form" class="card hidden">
+      <h2>Schedule episode <span id="schedule-episode-id"></span></h2>
+      <label>Cadence days <input id="schedule-cadence" type="number" min="1" value="7"></label>
+      <label>Starts at <input id="schedule-starts" type="datetime-local"></label>
+      <label class="check"><input id="schedule-public" type="checkbox"> Include public videos</label>
+      <button type="submit" class="primary">Apply schedule</button>
+      <div class="status-line" id="schedule-status"></div>
+      <ul id="schedule-result"></ul>
+    </form>
+  </section>
+
+  <section id="section-playlists" class="panel">
+    <div class="toolbar">
+      <input id="playlist-channel" type="number" min="1" placeholder="Channel ID">
+      <button id="playlist-load-btn" class="primary">Load playlists</button>
+    </div>
+    <div class="status-line" id="playlist-status"></div>
+    <div id="playlist-list"></div>
+    <form id="playlist-create-form" class="card">
+      <h2>Create playlist</h2>
+      <label>Channel ID <input id="playlist-new-channel" type="number" min="1"></label>
+      <label>Title <input id="playlist-new-title" type="text"></label>
+      <label>Description <textarea id="playlist-new-description" rows="3"></textarea></label>
+      <label>Privacy
+        <select id="playlist-new-privacy">
+          <option value="private">private</option>
+          <option value="unlisted">unlisted</option>
+          <option value="public">public</option>
+        </select>
+      </label>
+      <button type="submit" class="primary">Create</button>
+      <div class="status-line" id="playlist-create-status"></div>
+    </form>
+  </section>
+
+  <section id="section-abtests" class="panel">
+    <div class="toolbar">
+      <input id="ab-video-id" type="number" min="1" placeholder="Video ID (blank = active tests)">
+      <button id="ab-load-btn" class="primary">Load tests</button>
+    </div>
+    <div class="status-line" id="ab-status"></div>
+    <div id="ab-list"></div>
+    <form id="ab-create-form" class="card">
+      <h2>Create A/B test</h2>
+      <label>Video ID <input id="ab-new-video" type="number" min="1"></label>
+      <label>Variant A <input id="ab-new-a" type="text"></label>
+      <label>Variant B <input id="ab-new-b" type="text"></label>
+      <button type="submit" class="primary">Create test</button>
+      <div class="status-line" id="ab-create-status"></div>
+    </form>
+  </section>
+
+  <section id="section-accounts" class="panel">
+    <div class="toolbar">
+      <button id="accounts-load-btn" class="primary">Load accounts</button>
+      <button id="sync-all-btn">Sync all</button>
+      <span id="sync-spinner" class="spinner hidden"></span>
+    </div>
+    <div class="status-line" id="account-status"></div>
+    <table class="grid">
+      <thead><tr><th>Account</th><th>Label</th><th>Channel</th><th>YT Channel ID</th><th>Subscribers</th><th>Videos</th></tr></thead>
+      <tbody id="account-rows"></tbody>
+    </table>
+    <pre id="sync-result" class="plan-box hidden"></pre>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
