@@ -3,7 +3,7 @@
 **Spec:** 02-spec/21-app/28-new-repository-and-app-creation/
 **Execution:** execute-parent-task-with-n-steps-v6 (A=2 workers per wave,
 disjoint file ownership, workers never run git; the lead commits).
-**Status:** in progress
+**Status:** completed (2026-10-23)
 
 ## Setup (done outside the waves)
 
@@ -42,10 +42,27 @@ disjoint file ownership, workers never run git; the lead commits).
 
 ## Closeout
 
-- [ ] Atomic commits per subtask, pushed; CI verified via GitHub
+- [x] Atomic commits per subtask, pushed; CI verified via GitHub
       check-runs API (not `gitmap pe` alone).
-- [ ] Tag v0.1.0; release assets verified (plain binary name,
+- [x] Tag v0.1.0; release assets verified (plain binary name,
       checksums.txt).
-- [ ] repo-cache blueprint `XX-yt-manage` + README.index (separate
+- [x] repo-cache blueprint `13-yt-manage` + README.index (separate
       repo, separate commit).
-- [ ] This plan moved to completed with a closure note.
+- [x] This plan moved to completed with a closure note.
+
+## Closure note (2026-10-23)
+
+All five waves landed and were consolidated by the lead into two
+commits (application; CI/CD + installer + scaffolding vet fix).
+Local verification: gofmt clean, `go vet ./...`, `go build ./...`,
+full `go test ./...` (model, cryptox, episodes, scheduler, batch),
+and cross-compiles for linux/amd64, windows/amd64, darwin/arm64 —
+all green. The first GitHub CI run could not start: the account's
+Actions billing/spending limit blocked job startup (annotation on
+the run). The user made the repo public, the re-run went fully
+green (Test + 3 cross-compiles, check-runs API), and v0.1.0 was
+tagged from the closeout commit for the release workflow.
+Live acceptance items that need real credentials (OAuth consent
+against a real Google client, sync against a real channel) remain
+for first real use; the code paths are exercised by unit tests and
+local smoke runs only.
