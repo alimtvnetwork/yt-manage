@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting (gofmt gate)
+        run: test -z "$(gofmt -l .)"
+
+      # Vet and test run repo-wide (./...). The vendored guideline
+      # tooling under linter-scripts/ originally carried a vet
+      # finding (a fmt.Println call whose argument ended with a
+      # redundant newline); that one line was fixed in this repo and
+      # the finding was filed upstream with the coding-guidelines
+      # owners, so no package needs scoping out.
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test with coverage
+        run: go test ./... -coverprofile=coverage.out -count=1
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  cross-compile:
+    name: Cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            binary: yt-manage
+          - goos: windows
+            goarch: amd64
+            binary: yt-manage.exe
+          - goos: darwin
+            goarch: arm64
+            binary: yt-manage
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build for ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -o ${{ matrix.binary }} .
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yt-manage-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ matrix.binary }}

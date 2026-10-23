@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The archive must contain ONLY the plain-named binary
+      # (yt-manage / yt-manage.exe) at its root: a versioned binary
+      # name inside the archive breaks self-update (the gitmap
+      # E1148 lesson), so the version lives in the archive name,
+      # never in the binary name inside it.
+      - name: Build and package release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stage dist
+          for target in "linux amd64" "windows amd64" "darwin arm64"; do
+            read -r goos goarch <<< "$target"
+            binary="yt-manage"
+            if [ "$goos" = "windows" ]; then
+              binary="yt-manage.exe"
+            fi
+            rm -f stage/yt-manage stage/yt-manage.exe
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags "-s -w" -o "stage/${binary}" .
+            if [ "$goos" = "windows" ]; then
+              zip -j "dist/yt-manage_${goos}_${goarch}.zip" "stage/${binary}"
+            else
+              tar -czf "dist/yt-manage_${goos}_${goarch}.tar.gz" -C stage "${binary}"
+            fi
+          done
+          ls -l dist
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum yt-manage_linux_amd64.tar.gz yt-manage_windows_amd64.zip yt-manage_darwin_arm64.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --title "${{ github.ref_name }}" --generate-notes

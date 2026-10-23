@@ -24,16 +24,21 @@ disjoint file ownership, workers never run git; the lead commits).
 
 ## Waves
 
-- [ ] Subtask 01 — Core: module, config, cryptox, models/enums, split
+- [x] Subtask 01 — Core: module, config, cryptox, models/enums, split
       DB, repositories, CLI skeleton + help.
-- [ ] Subtask 02 — YouTube: OAuth connect, API client, sync engine,
+- [x] Subtask 02 — YouTube: OAuth connect, API client, sync engine,
       mirror search, batch rename/edit with confirmation.
-- [ ] Subtask 03 — Features: episode grouper, cadence scheduler,
+- [x] Subtask 03 — Features: episode grouper, cadence scheduler,
       comment automation, publish email.
-- [ ] Subtask 04 — Platform: REST API + CSS3 UI, peer sync, llm train
+- [x] Subtask 04 — Platform: REST API + CSS3 UI, peer sync, llm train
       export, self-updater.
-- [ ] Subtask 05 — Delivery: CI workflow, release workflow,
+- [x] Subtask 05 — Delivery: CI workflow, release workflow,
       install.sh, unit tests for pure logic, README completion.
+      (Lead fix on consolidation: the vendored
+      linter-scripts/validate-guidelines.go carried a vet finding —
+      a Println argument ending in a redundant newline — so CI scoped
+      vet/test around it. The lead fixed that one line in-repo and
+      restored repo-wide `go vet ./...` / `go test ./...` gates.)
 
 ## Closeout
 
