@@ -1,0 +1,89 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+!slides-app/dist/
+!slides-app/dist/**
+dist-ssr
+.output
+.vinxi
+.tanstack/**
+.nitro
+*.local
+
+# Wrangler / Cloudflare
+.wrangler/
+.dev.vars
+
+# Generated code, artifacts, test data, and binaries (NEVER COMMIT)
+*.generated.*
+*_generated.*
+!linters-cicd/codegen/fixtures/expected/*.generated.*
+coverage/
+test-results/
+test-reports/
+*.test-report.*
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+build/
+bin/
+obj/
+*.class
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+release-assets
+reports/runner-guard-report.md
+.gitmap/release-assets
+.cache/diagrams-hashes.json
+
+# Repo-size diet (v5.49.0): historical release bundles + gitmap backup snapshots
+# are reproducible from git tags / GitHub Releases — keep them out of clones.
+release-artifacts/coding-guidelines-v*
+release-artifacts/*.tar.gz
+release-artifacts/*.zip
+release-artifacts/checksums.txt
+.gitmap/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+.ai-memory/temp-scripts/
+/tmp
+tmp/
+.tmp/
+*.db
+*.sqlite
+*.sqlite3
+*.code-workspace
+.ai-memory/temp/
+.ai-memory/temp-agents/
+.ai-memory/cicd/
+antigravity-resume_task.json
+.antigravity_resume_task.json
+antigravity_resume_task.json
+.antigravity-resume_task.json
+
+
+# GitMap & Task Persistence
+.gitmap/backup/
