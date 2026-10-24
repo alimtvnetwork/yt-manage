@@ -50,6 +50,16 @@ const state = {
   ccFilter: "all",
   ccRendered: {},
   channelDefaults: new Map(),
+  // Wave 6 (items 126-150)
+  playlists: [],
+  playlistChannel: "",
+  plMove: { sourceId: "", targetId: "", items: [] },
+  ccCoverage: [],
+  ccGapFilter: null,
+  ccBulkRows: [],
+  longForm: false,
+  insightsBy: "views",
+  orphanPlaylists: [],
 };
 
 const SECTIONS = {
@@ -61,6 +71,7 @@ const SECTIONS = {
   commentcentre: "Comment Centre",
   schedules: "Schedules",
   playlists: "Playlists",
+  insights: "Insights",
   comments: "Comments",
   abtests: "A/B Tests",
   accounts: "Accounts",
@@ -629,6 +640,7 @@ function onEnterSection(section) {
   if (section === "automation") loadAutomation();
   if (section === "commentcentre") loadCommentCentre();
   if (section === "playlists" && el("playlist-channel").value) loadPlaylists();
+  if (section === "insights") loadInsights();
   if (section === "schedules") loadSchedules();
   if (section === "comments") loadComments();
   if (section === "accounts") loadAccounts();
@@ -1010,10 +1022,78 @@ function setVisibility(value, reload) {
 function setToggleChips(shorts, hasComments, reload) {
   state.shorts = !!shorts;
   state.hasComments = !!hasComments;
+  if (state.shorts) state.longForm = false;
   el("chip-shorts").setAttribute("aria-pressed", String(state.shorts));
   el("chip-has-comments").setAttribute("aria-pressed", String(state.hasComments));
+  renderLengthChips();
   if (state.section === "videos") updateHash();
   if (reload) loadVideos();
+}
+
+// Length views (item 139): All / Shorts (≤60s) / Long-form (≥61s).
+// Shorts uses the server filter (Wave 1); long-form is its complement,
+// filtered here from durationSeconds, which videoDTO carries.
+function lengthViewName() {
+  if (state.shorts) return "shorts";
+  if (state.longForm) return "long";
+  return "all";
+}
+
+function isShortVideo(video) {
+  if (video.isShort) return true;
+  return (video.durationSeconds || 0) > 0 && video.durationSeconds <= 60;
+}
+
+function displayVideos() {
+  if (state.longForm && !state.shorts) {
+    return state.videos.filter((video) => (video.durationSeconds || 0) >= 61);
+  }
+  return state.videos;
+}
+
+function renderLengthChips() {
+  const view = lengthViewName();
+  document.querySelectorAll("#length-chips .chip[data-length]").forEach((chip) =>
+    chip.classList.toggle("is-active", chip.dataset.length === view));
+  const all = state.videos.length;
+  const shorts = state.videos.filter(isShortVideo).length;
+  const long = state.videos.filter((video) => (video.durationSeconds || 0) >= 61).length;
+  el("length-count-all").textContent = "(" + all + ")";
+  el("length-count-shorts").textContent = "(" + shorts + ")";
+  el("length-count-long").textContent = "(" + long + ")";
+}
+
+el("length-chips").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-length]");
+  if (!chip) return;
+  const view = chip.dataset.length;
+  if (view === "shorts") {
+    state.longForm = false;
+    setToggleChips(true, state.hasComments, true);
+  } else if (view === "long") {
+    state.longForm = true;
+    if (state.shorts) setToggleChips(false, state.hasComments, true);
+    else { renderLengthChips(); renderVideos(); renderLongFormEmpty(); }
+  } else {
+    state.longForm = false;
+    if (state.shorts) setToggleChips(false, state.hasComments, true);
+    else { renderLengthChips(); renderVideos(); }
+  }
+});
+
+function renderLongFormEmpty() {
+  const box = el("video-empty");
+  if (!state.longForm || displayVideos().length > 0 || state.videos.length === 0) return;
+  box.innerHTML = "<span class=\"state-art\" aria-hidden=\"true\">▷</span><h3>No long-form videos in these results</h3>" +
+    "<p>None of the " + state.videos.length + " loaded video(s) runs 61 seconds or longer.</p>" +
+    "<div class=\"row\"><button id=\"empty-length-all\" class=\"primary\">Show all lengths</button></div>";
+  box.classList.remove("hidden");
+  el("empty-length-all").addEventListener("click", () => {
+    state.longForm = false;
+    renderLengthChips();
+    renderVideos();
+    box.classList.add("hidden");
+  });
 }
 
 el("visibility-chips").addEventListener("click", (event) => {
@@ -1047,6 +1127,7 @@ async function loadVideos() {
     renderVideos();
     updateBulkPreview();
     renderVideoEmpty(data.count || 0, vs);
+    renderLongFormEmpty();
     setStatus("video-status", data.count + " video(s)", "ok");
   } catch (err) {
     setStatus("video-status", friendlyError(err), "error");
@@ -1120,10 +1201,12 @@ function renderVideos() {
   tbody.classList.remove("refreshing");
   void tbody.offsetWidth;
   const q = currentVideoState().q;
-  tbody.innerHTML = state.videos.map((video, index) => {
+  const display = displayVideos();
+  const activeVideo = state.videos[state.activeVideoIndex];
+  tbody.innerHTML = display.map((video) => {
     const checked = state.selected.has(video.id) ? " checked" : "";
     const rowCls = [];
-    if (index === state.activeVideoIndex) rowCls.push("keyboard-active");
+    if (activeVideo && video.id === activeVideo.id) rowCls.push("keyboard-active");
     if (state.selected.has(video.id)) rowCls.push("selected");
     const snippet = descriptionSnippet(video.description, q);
     return "<tr data-id=\"" + video.id + "\"" + (rowCls.length ? " class=\"" + rowCls.join(" ") + "\"" : "") + ">" +
@@ -1138,9 +1221,10 @@ function renderVideos() {
   }).join("");
   tbody.classList.add("refreshing");
   // Tables announce their row counts to screen readers (item 86).
-  el("video-table").setAttribute("aria-label", "Videos, " + state.videos.length + " row" + (state.videos.length === 1 ? "" : "s"));
+  el("video-table").setAttribute("aria-label", "Videos, " + display.length + " row" + (display.length === 1 ? "" : "s"));
   el("video-select-all").checked = state.videos.length > 0 && state.selected.size === state.videos.length;
   renderSelectionBar();
+  renderLengthChips();
 }
 
 // File-manager style multi-select (item 73): shift-click selects a
@@ -1552,6 +1636,7 @@ function openDrawer(video) {
   el("video-edit-form").dataset.videoId = String(video.id);
   setStatus("edit-status", "");
   loadVideoHistory(video.id);
+  loadTopComments(video);
   el("video-drawer").classList.add("open");
   el("video-drawer").setAttribute("aria-hidden", "false");
   el("drawer-backdrop").classList.remove("hidden");
@@ -1578,6 +1663,33 @@ async function loadVideoHistory(videoId) {
   } catch (err) {
     if (el("video-edit-form").dataset.videoId === String(videoId)) {
       box.innerHTML = "<p class=\"muted-text\">No recorded renames yet</p>";
+    }
+  }
+}
+
+// Top comments in the drawer (item 128): the mirrored comments,
+// most liked first. Read-only — replies happen in YouTube Studio.
+async function loadTopComments(video) {
+  const box = el("drawer-top-comments");
+  if (!box || !video || !video.id) return;
+  box.innerHTML = "<p class=\"muted-text\">Loading comments…</p>";
+  try {
+    const comments = await api("GET", "/api/videos/" + video.id + "/comments");
+    if (el("video-edit-form").dataset.videoId !== String(video.id)) return;
+    const watchURL = "https://www.youtube.com/watch?v=" + encodeURIComponent(video.ytVideoId || "");
+    const note = "<p class=\"muted-text\">Replies happen in YouTube Studio — this list is the read-only mirror. " +
+      "<a href=\"" + watchURL + "\" target=\"_blank\" rel=\"noopener\">Open the video on YouTube</a></p>";
+    if (!comments || comments.length === 0) {
+      box.innerHTML = "<p class=\"muted-text\">No comments mirrored for this video yet — they arrive with a sync.</p>" + note;
+      return;
+    }
+    box.innerHTML = comments.map((comment) =>
+      "<div class=\"history-entry\"><div class=\"history-change\">" + escapeHTML(comment.text || "") + "</div>" +
+      "<div class=\"muted-text\">" + escapeHTML(comment.author || "Unknown author") + " · ♥ " + (comment.likeCount || 0) +
+      (comment.isFirst ? " · <span class=\"pill\">first comment</span>" : "") + "</div></div>").join("") + note;
+  } catch (err) {
+    if (el("video-edit-form").dataset.videoId === String(video.id)) {
+      box.innerHTML = "<p class=\"muted-text\">Comments could not be loaded.</p>";
     }
   }
 }
@@ -2616,23 +2728,70 @@ async function loadSchedules() {
 el("schedules-load-btn").addEventListener("click", loadSchedules);
 
 // --------------------------------------------------------------- playlists
+// Playlist board (item 131): cards with counts, privacy and
+// last-updated, staged title/description edits (item 91, kept), a
+// detail area per playlist (checklist 138, gaps 133, reorder and
+// privacy 136), and the two-pane move board below.
+function playlistById(id) {
+  return (state.playlists || []).find((playlist) => String(playlist.id) === String(id));
+}
+
+function playlistPrivacyPill(playlist) {
+  // playlistDTO currently carries no privacy field (verified in
+  // dto.go: the model has Privacy, the DTO does not expose it), so
+  // show the pill only when a value is actually present.
+  if (playlist.privacy) {
+    return " <span class=\"pill\" data-pl-privacy-pill=\"" + playlist.id + "\">" + escapeHTML(playlist.privacy) + "</span>";
+  }
+  return " <span class=\"pill\" data-pl-privacy-pill=\"" + playlist.id + "\">privacy not recorded</span>";
+}
+
+function playlistSeriesKey(title) {
+  // The series key passed to the gaps endpoint: the playlist
+  // title's first two words, lowercased (the show key shape).
+  return String(title || "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 2).join(" ");
+}
+
 async function loadPlaylists() {
   const channel = el("playlist-channel").value;
   if (!channel) { setStatus("playlist-status", "Channel ID is required", "error"); return; }
   setStatus("playlist-status", "Loading...");
   try {
     const playlists = await api("GET", "/api/playlists?channel=" + encodeURIComponent(channel));
+    state.playlists = playlists;
+    state.playlistChannel = channel;
     state.playlistEdits = new Map(playlists.map((playlist) => [String(playlist.id), playlist]));
     el("playlist-list").innerHTML = playlists.map((playlist) =>
       "<div class=\"card playlist\"><h3>" + escapeHTML(playlist.title) +
-      " <span class=\"pill\">" + playlist.itemCount + " items</span></h3>" +
+      " <span class=\"pill\">" + playlist.itemCount + " items</span>" + playlistPrivacyPill(playlist) +
+      (playlist.updatedAt ? " <span class=\"pill\">updated " + escapeHTML(relativeTime(playlist.updatedAt) || playlist.updatedAt) + "</span>" : "") + "</h3>" +
       "<p>" + escapeHTML(playlist.description || "") + "</p>" +
       "<div class=\"inline-form\"><input data-pl-title=\"" + playlist.id + "\" value=\"" + escapeHTML(playlist.title) + "\" aria-label=\"Playlist title\">" +
       "<input data-pl-desc=\"" + playlist.id + "\" value=\"" + escapeHTML(playlist.description || "") + "\" aria-label=\"Playlist description\">" +
       "<button data-pl-review=\"" + playlist.id + "\" data-write>Review changes</button></div>" +
-      "<div class=\"pl-review hidden\" id=\"pl-review-" + playlist.id + "\"></div></div>").join("") ||
+      "<div class=\"pl-review hidden\" id=\"pl-review-" + playlist.id + "\"></div>" +
+      "<div class=\"row pl-actions\">" +
+      "<button data-pl-checklist=\"" + playlist.id + "\">Publish checklist</button>" +
+      "<button data-pl-gaps=\"" + playlist.id + "\">Find gaps</button>" +
+      "<button data-pl-reorder-open=\"" + playlist.id + "\">Reorder</button>" +
+      "<span class=\"pl-privacy-edit\"><select data-pl-privacy-select=\"" + playlist.id + "\" aria-label=\"Playlist privacy\">" +
+      "<option value=\"\">Set privacy…</option><option value=\"private\">private</option>" +
+      "<option value=\"unlisted\">unlisted</option><option value=\"public\">public</option></select>" +
+      "<button data-pl-privacy-apply=\"" + playlist.id + "\" data-write>Apply privacy</button></span></div>" +
+      "<div class=\"pl-detail hidden\" id=\"pl-checklist-" + playlist.id + "\"></div>" +
+      "<div class=\"pl-detail hidden\" id=\"pl-gaps-" + playlist.id + "\"></div>" +
+      "<div class=\"pl-detail hidden\" id=\"pl-reorder-" + playlist.id + "\">" +
+      "<div class=\"preview-label\">Reorder — preview first</div>" +
+      "<p class=\"muted-text\">Reordering rebuilds the playlist through the YouTube API: every item is removed and re-inserted in the new order, at roughly 50 quota units per item touched.</p>" +
+      "<div class=\"row\"><label>Order by <select data-pl-reorder-mode=\"" + playlist.id + "\">" +
+      "<option value=\"episode\">Episode number</option><option value=\"date\">Publish date</option></select></label>" +
+      "<button data-pl-reorder-preview=\"" + playlist.id + "\">Preview order</button>" +
+      "<button class=\"primary hidden\" data-pl-reorder-apply=\"" + playlist.id + "\" data-write>Apply reorder</button></div>" +
+      "<div data-pl-reorder-table=\"" + playlist.id + "\"></div></div>" +
+      "</div>").join("") ||
       "<div class=\"empty-state\"><h3>No playlists for this channel</h3>" +
       "<p>Playlists you create in YouTube Studio appear here after a sync — or create one with the form below and it is made on YouTube right away.</p></div>";
+    renderBoardSelects();
     setStatus("playlist-status", playlists.length + " playlist(s)", "ok");
   } catch (err) {
     setStatus("playlist-status", friendlyError(err), "error");
@@ -2640,6 +2799,244 @@ async function loadPlaylists() {
 }
 
 el("playlist-load-btn").addEventListener("click", loadPlaylists);
+
+// ---------------------------------------------------- playlist board
+// Two-pane move view (item 131). The source pane lists the source
+// playlist's mirrored items — enumerated via the reorder-preview
+// endpoint, the one API that returns a playlist's items with
+// titles. Click-to-move is the reliable path; drag-and-drop onto
+// the target pane is the bonus path.
+function renderBoardSelects() {
+  const playlists = state.playlists || [];
+  const options = playlists.map((playlist) =>
+    "<option value=\"" + playlist.id + "\">" + escapeHTML(playlist.title) + " (" + playlist.itemCount + ")</option>").join("");
+  const source = el("pl-move-source");
+  const target = el("pl-move-target");
+  source.innerHTML = "<option value=\"\">Choose a source playlist…</option>" + options;
+  target.innerHTML = "<option value=\"\">Choose a target playlist…</option>" + options;
+  if (state.plMove.sourceId && playlistById(state.plMove.sourceId)) source.value = state.plMove.sourceId;
+  if (state.plMove.targetId && playlistById(state.plMove.targetId)) target.value = state.plMove.targetId;
+  if (!state.plMove.targetId && playlists.length > 1) {
+    state.plMove.targetId = String(playlists[1].id);
+    target.value = state.plMove.targetId;
+  }
+  updateDropLabel();
+  if (state.plMove.sourceId) loadBoardItems();
+  else el("pl-move-items").innerHTML = "<p class=\"muted-text\">Choose a source playlist to list its videos here.</p>";
+}
+
+function updateDropLabel() {
+  const target = playlistById(state.plMove.targetId);
+  el("pl-move-drop-label").textContent = target ? "Target: " + target.title : "Choose a target playlist first.";
+}
+
+el("pl-move-source").addEventListener("change", () => {
+  state.plMove.sourceId = el("pl-move-source").value;
+  loadBoardItems();
+});
+el("pl-move-target").addEventListener("change", () => {
+  state.plMove.targetId = el("pl-move-target").value;
+  updateDropLabel();
+  renderBoardItems();
+});
+
+async function loadBoardItems() {
+  const box = el("pl-move-items");
+  const sourceId = state.plMove.sourceId;
+  if (!sourceId) {
+    box.innerHTML = "<p class=\"muted-text\">Choose a source playlist to list its videos here.</p>";
+    return;
+  }
+  box.innerHTML = "<p class=\"muted-text\">Loading the playlist's videos…</p>";
+  try {
+    const rows = await api("POST", "/api/playlists/" + sourceId + "/reorder-preview", { mode: "date" });
+    state.plMove.items = (Array.isArray(rows) ? rows : []).slice()
+      .sort((a, b) => (a.currentPos || 0) - (b.currentPos || 0));
+    renderBoardItems();
+  } catch (err) {
+    box.innerHTML = "<p class=\"muted-text\">This playlist's items could not be listed (" + escapeHTML(friendlyError(err)) + ").</p>";
+  }
+}
+
+function renderBoardItems() {
+  const box = el("pl-move-items");
+  if (!box || !state.plMove.sourceId) return;
+  const items = state.plMove.items || [];
+  const others = (state.playlists || []).filter((playlist) => String(playlist.id) !== String(state.plMove.sourceId));
+  if (items.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">No videos in this playlist (in the local mirror).</p>";
+    return;
+  }
+  box.innerHTML = items.map((item) =>
+    "<div class=\"board-item\" draggable=\"true\" data-drag-video=\"" + item.videoId + "\">" +
+    "<span class=\"drag-handle\" title=\"Drag to the target pane\">⋮⋮</span>" +
+    "<span class=\"board-item-title\">" + escapeHTML(item.title || ("Video " + item.videoId)) + "</span>" +
+    "<select data-move-target-for=\"" + item.videoId + "\" aria-label=\"Move target\">" +
+    others.map((playlist) =>
+      "<option value=\"" + playlist.id + "\"" + (String(playlist.id) === String(state.plMove.targetId) ? " selected" : "") + ">" +
+      escapeHTML(playlist.title) + "</option>").join("") + "</select>" +
+    "<button data-pl-move=\"" + item.videoId + "\" data-write>Move</button></div>").join("");
+}
+
+async function movePlaylistVideo(videoId) {
+  const sourceId = state.plMove.sourceId;
+  const select = document.querySelector("[data-move-target-for=\"" + videoId + "\"]");
+  const targetId = select ? select.value : state.plMove.targetId;
+  if (!sourceId || !targetId) { showToast("Pick a source and a target playlist first.", "error"); return; }
+  if (String(targetId) === String(sourceId)) { showToast("Source and target are the same playlist.", "error"); return; }
+  const item = (state.plMove.items || []).find((entry) => String(entry.videoId) === String(videoId));
+  const label = item ? item.title : ("Video " + videoId);
+  setStatus("pl-move-status", "Moving “" + label + "”…");
+  try {
+    await api("DELETE", "/api/playlists/" + sourceId + "/items/" + videoId);
+  } catch (err) {
+    setStatus("pl-move-status", "Could not remove it from the source playlist — nothing was moved.", "error");
+    showErrorToast(err, "playlists");
+    return;
+  }
+  try {
+    await api("POST", "/api/playlists/" + targetId + "/items", { videoId: Number(videoId) });
+  } catch (err) {
+    setStatus("pl-move-status", "Removed from the source, but adding to the target failed — the video is now in neither playlist.", "error");
+    showErrorToast(err, "playlists");
+    await loadBoardItems();
+    return;
+  }
+  setStatus("pl-move-status", "Moved “" + label + "”.", "ok");
+  showToast("Moved “" + label + "” to " + (playlistById(targetId) || {}).title, "ok");
+  state.plMove.items = (state.plMove.items || []).filter((entry) => String(entry.videoId) !== String(videoId));
+  renderBoardItems();
+  loadPlaylists();
+}
+
+el("pl-move-items").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-pl-move]");
+  if (button) movePlaylistVideo(button.dataset.plMove);
+});
+el("pl-move-items").addEventListener("dragstart", (event) => {
+  const item = event.target.closest("[data-drag-video]");
+  if (!item || !event.dataTransfer) return;
+  event.dataTransfer.effectAllowed = "move";
+  try { event.dataTransfer.setData("text/plain", item.dataset.dragVideo); } catch (err) { /* optional */ }
+  state.dragVideoId = item.dataset.dragVideo;
+});
+el("pl-move-drop").addEventListener("dragover", (event) => {
+  event.preventDefault();
+  el("pl-move-drop").classList.add("is-over");
+});
+el("pl-move-drop").addEventListener("dragleave", () => el("pl-move-drop").classList.remove("is-over"));
+el("pl-move-drop").addEventListener("drop", (event) => {
+  event.preventDefault();
+  el("pl-move-drop").classList.remove("is-over");
+  let videoId = state.dragVideoId;
+  if (event.dataTransfer) {
+    try { videoId = event.dataTransfer.getData("text/plain") || videoId; } catch (err) { /* keep state copy */ }
+  }
+  state.dragVideoId = null;
+  if (videoId) {
+    // A drop always targets the board's target playlist.
+    const select = document.querySelector("[data-move-target-for=\"" + videoId + "\"]");
+    if (select && state.plMove.targetId) select.value = state.plMove.targetId;
+    movePlaylistVideo(videoId);
+  }
+});
+
+// Duplicate detector (item 134): findings only — removal happens
+// through the board above, never automatically.
+el("playlist-dup-btn").addEventListener("click", async () => {
+  const box = el("playlist-dup-results");
+  box.classList.remove("hidden");
+  box.innerHTML = "<h2>Duplicate check</h2><p class=\"muted-text\">Checking every playlist in the mirror…</p>";
+  try {
+    const findings = await api("GET", "/api/playlists/duplicates");
+    const list = Array.isArray(findings) ? findings : [];
+    box.innerHTML = "<div class=\"card-head\"><h2>Duplicate check</h2><button id=\"playlist-dup-close\">Close</button></div>" +
+      (list.length === 0
+        ? "<p class=\"result-ok\">No duplicates found — no video appears twice in a playlist, and no two playlists overlap by 80% or more ✓</p>"
+        : list.map((finding) =>
+          "<div class=\"dup-row\"><span class=\"pill\">" + escapeHTML(finding.kind || "duplicate") + "</span> " +
+          escapeHTML(finding.detail || "") +
+          (finding.playlistId ? " <span class=\"muted-text\">(playlist #" + finding.playlistId + ")</span>" : "") + "</div>").join("")) +
+      (list.length ? "<p class=\"muted-text\">Nothing was changed. Remove a copy through the playlist board above.</p>" : "");
+    el("playlist-dup-close").addEventListener("click", () => box.classList.add("hidden"));
+  } catch (err) {
+    box.innerHTML = "<h2>Duplicate check</h2><p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+  }
+});
+
+// Orphan videos (item 137): public videos in no playlist, grouped
+// by likely series, with bulk add per group.
+el("orphans-load-btn").addEventListener("click", async () => {
+  const channelId = el("orphan-channel").value;
+  const box = el("orphans-list");
+  if (!channelId) { setStatus("orphans-status", "Choose a channel first.", "error"); return; }
+  setStatus("orphans-status", "Finding orphans…");
+  try {
+    try {
+      state.orphanPlaylists = await api("GET", "/api/playlists?channel=" + encodeURIComponent(channelId));
+    } catch (err) { state.orphanPlaylists = []; }
+    const groups = await api("GET", "/api/orphans?channelId=" + encodeURIComponent(channelId));
+    const list = Array.isArray(groups) ? groups : [];
+    setStatus("orphans-status", list.length + " orphan group(s)", "ok");
+    if (list.length === 0) {
+      box.innerHTML = "<p class=\"result-ok\">No orphans — every public video on this channel is in a playlist ✓</p>";
+      return;
+    }
+    box.innerHTML = list.map((group, index) =>
+      "<div class=\"orphan-group\"><div class=\"orphan-head\"><strong>" +
+      escapeHTML(group.seriesKey || "(no series detected)") + "</strong>" +
+      " <span class=\"pill\">" + group.count + " video(s)</span></div>" +
+      "<div class=\"row\"><select data-orphan-target=\"" + index + "\">" +
+      (state.orphanPlaylists || []).map((playlist) =>
+        "<option value=\"" + playlist.id + "\">" + escapeHTML(playlist.title) + "</option>").join("") + "</select>" +
+      "<button data-orphan-add=\"" + index + "\" data-write>Add all to playlist</button>" +
+      (group.seriesKey ? "<button data-orphan-series=\"" + index + "\" data-write>Create/update series playlist</button>" : "") +
+      "</div><div class=\"status-line\" id=\"orphan-status-" + index + "\"></div></div>").join("");
+    box.dataset.channel = channelId;
+    box.dataset.groups = JSON.stringify(list);
+  } catch (err) {
+    setStatus("orphans-status", friendlyError(err), "error");
+    showErrorToast(err, "playlists");
+  }
+});
+
+el("orphans-list").addEventListener("click", async (event) => {
+  const box = el("orphans-list");
+  const channelId = box.dataset.channel;
+  let groups = [];
+  try { groups = JSON.parse(box.dataset.groups || "[]"); } catch (err) { groups = []; }
+  const seriesBtn = event.target.closest("[data-orphan-series]");
+  if (seriesBtn) {
+    const group = groups[Number(seriesBtn.dataset.orphanSeries)];
+    if (!group) return;
+    try {
+      const data = await api("POST", "/api/series/playlist", { channelId: Number(channelId), seriesKey: group.seriesKey });
+      showToast("Playlist “" + (data.playlistTitle || group.seriesKey) + "”: added " + data.added + " of " + data.total, "ok");
+      el("orphans-load-btn").click();
+    } catch (err) { showErrorToast(err, "playlists"); }
+    return;
+  }
+  const addBtn = event.target.closest("[data-orphan-add]");
+  if (!addBtn) return;
+  const index = Number(addBtn.dataset.orphanAdd);
+  const group = groups[index];
+  const select = document.querySelector("[data-orphan-target=\"" + index + "\"]");
+  if (!group || !select || !select.value) { setStatus("orphan-status-" + index, "Choose a target playlist first.", "error"); return; }
+  addBtn.disabled = true;
+  let added = 0;
+  const failures = [];
+  for (const videoId of group.videoIds || []) {
+    try {
+      await api("POST", "/api/playlists/" + select.value + "/items", { videoId: Number(videoId) });
+      added++;
+    } catch (err) { failures.push(videoId); }
+    setStatus("orphan-status-" + index, "Added " + added + " of " + (group.videoIds || []).length + "…");
+  }
+  setStatus("orphan-status-" + index,
+    "Added " + added + " video(s)" + (failures.length ? " — failed: " + failures.join(", ") : ""), failures.length ? "error" : "ok");
+  showToast("Orphans: added " + added + " video(s) to the playlist", failures.length ? "error" : "ok");
+  addBtn.disabled = false;
+});
 
 // Playlist edits are staged (item 91): edit → review the diff →
 // apply or discard. Nothing reaches YouTube before Apply.
@@ -2679,6 +3076,147 @@ function reviewPlaylist(id) {
 }
 
 el("playlist-list").addEventListener("click", async (event) => {
+  // Publish checklist (item 138).
+  const checklistBtn = event.target.closest("[data-pl-checklist]");
+  if (checklistBtn) {
+    const id = checklistBtn.dataset.plChecklist;
+    const box = el("pl-checklist-" + id);
+    box.classList.remove("hidden");
+    box.innerHTML = "<p class=\"muted-text\">Checking…</p>";
+    try {
+      const checks = await api("GET", "/api/playlists/" + id + "/checklist");
+      box.innerHTML = "<div class=\"preview-label\">Publish checklist</div>" + (checks || []).map((check) =>
+        "<div class=\"checklist-line " + (check.ok ? "is-ok" : "is-fail") + "\">" +
+        "<span class=\"preflight-mark\">" + (check.ok ? "✓" : "✗") + "</span> " +
+        "<strong>" + escapeHTML(check.name || "") + "</strong> <span class=\"muted-text\">" +
+        escapeHTML(check.message || "") + "</span></div>").join("");
+    } catch (err) {
+      box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+    }
+    return;
+  }
+  // Gaps finder (item 133).
+  const gapsBtn = event.target.closest("[data-pl-gaps]");
+  if (gapsBtn) {
+    const id = gapsBtn.dataset.plGaps;
+    const playlist = playlistById(id);
+    const box = el("pl-gaps-" + id);
+    box.classList.remove("hidden");
+    box.innerHTML = "<p class=\"muted-text\">Looking for gaps…</p>";
+    try {
+      const seriesKey = playlistSeriesKey(playlist ? playlist.title : "");
+      const data = await api("GET", "/api/playlists/" + id + "/gaps?series=" + encodeURIComponent(seriesKey));
+      const titleOf = (videoId) => {
+        const known = (state.videos || []).find((video) => String(video.id) === String(videoId));
+        return known ? known.title : ("Video #" + videoId);
+      };
+      box.innerHTML = "<div class=\"preview-label\">Gaps for series “" + escapeHTML(data.seriesKey || seriesKey) + "”</div>" +
+        (data.missingCount === 0 && data.extraCount === 0
+          ? "<p class=\"result-ok\">No gaps — the playlist matches the series ✓</p>"
+          : "<p>Missing from the playlist (" + data.missingCount + "):</p>" +
+            ((data.missingVideoIds || []).length
+              ? "<ul class=\"parts\">" + data.missingVideoIds.map((videoId) => "<li>" + escapeHTML(titleOf(videoId)) + "</li>").join("") + "</ul>"
+              : "<p class=\"muted-text\">None.</p>") +
+            (data.missingCount > 0
+              ? "<button class=\"primary\" data-pl-gaps-add=\"" + id + "\" data-series=\"" + escapeHTML(data.seriesKey || seriesKey) + "\" data-write>Add all missing</button>" : "") +
+            "<p>Extra in the playlist, not in the series (" + data.extraCount + "):</p>" +
+            ((data.extraVideoIds || []).length
+              ? "<ul class=\"parts\">" + data.extraVideoIds.map((videoId) => "<li>" + escapeHTML(titleOf(videoId)) + "</li>").join("") + "</ul>"
+              : "<p class=\"muted-text\">None.</p>")) +
+        "<div class=\"status-line\" id=\"pl-gaps-status-" + id + "\"></div>";
+    } catch (err) {
+      box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+    }
+    return;
+  }
+  const gapsAdd = event.target.closest("[data-pl-gaps-add]");
+  if (gapsAdd) {
+    const id = gapsAdd.dataset.plGapsAdd;
+    const playlist = playlistById(id);
+    if (!playlist) return;
+    gapsAdd.disabled = true;
+    try {
+      const data = await api("POST", "/api/series/playlist", {
+        channelId: playlist.channelId,
+        seriesKey: gapsAdd.dataset.series,
+        playlistId: Number(id),
+      });
+      setStatus("pl-gaps-status-" + id, "Added " + data.added + " of " + data.total + " video(s) to “" + (data.playlistTitle || playlist.title) + "”.", "ok");
+      showToast("Gaps repaired: added " + data.added + " video(s)", "ok");
+    } catch (err) {
+      setStatus("pl-gaps-status-" + id, friendlyError(err), "error");
+      showErrorToast(err, "playlists");
+      gapsAdd.disabled = false;
+    }
+    return;
+  }
+  // Reorder (item 136): preview, then apply.
+  const reorderOpen = event.target.closest("[data-pl-reorder-open]");
+  if (reorderOpen) {
+    const box = el("pl-reorder-" + reorderOpen.dataset.plReorderOpen);
+    if (box) box.classList.toggle("hidden");
+    return;
+  }
+  const reorderPreview = event.target.closest("[data-pl-reorder-preview]");
+  if (reorderPreview) {
+    const id = reorderPreview.dataset.plReorderPreview;
+    const mode = document.querySelector("[data-pl-reorder-mode=\"" + id + "\"]").value;
+    const tableBox = document.querySelector("[data-pl-reorder-table=\"" + id + "\"]");
+    tableBox.innerHTML = "<p class=\"muted-text\">Building the preview…</p>";
+    try {
+      const rows = await api("POST", "/api/playlists/" + id + "/reorder-preview", { mode });
+      const list = Array.isArray(rows) ? rows : [];
+      tableBox.innerHTML = list.length === 0
+        ? "<p class=\"muted-text\">No items in this playlist (in the local mirror).</p>"
+        : "<table class=\"grid\"><thead><tr><th>Video</th><th>Current position</th><th>Proposed position</th></tr></thead><tbody>" +
+          list.map((row) =>
+            "<tr" + (row.currentPos !== row.proposedPos ? " class=\"plan-excluded\"" : "") + "><td>" +
+            escapeHTML(row.title || ("Video " + row.videoId)) + "</td><td>" + (row.currentPos + 1) +
+            "</td><td>" + (row.proposedPos + 1) + "</td></tr>").join("") + "</tbody></table>";
+      const applyBtn = document.querySelector("[data-pl-reorder-apply=\"" + id + "\"]");
+      applyBtn.classList.toggle("hidden", list.length === 0);
+      applyBtn.dataset.mode = mode;
+    } catch (err) {
+      tableBox.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+    }
+    return;
+  }
+  const reorderApply = event.target.closest("[data-pl-reorder-apply]");
+  if (reorderApply) {
+    const id = reorderApply.dataset.plReorderApply;
+    const mode = reorderApply.dataset.mode ||
+      document.querySelector("[data-pl-reorder-mode=\"" + id + "\"]").value;
+    reorderApply.disabled = true;
+    try {
+      const data = await api("POST", "/api/playlists/" + id + "/reorder", { mode });
+      showToast("Playlist reordered: " + (data.reordered || 0) + " item(s) now in " + mode + " order", "ok");
+      setStatus("playlist-status", "Reorder applied (" + (data.reordered || 0) + " item(s))", "ok");
+    } catch (err) {
+      showErrorToast(err, "playlists");
+      reorderApply.disabled = false;
+    }
+    return;
+  }
+  // Privacy (item 136).
+  const privacyApply = event.target.closest("[data-pl-privacy-apply]");
+  if (privacyApply) {
+    const id = privacyApply.dataset.plPrivacyApply;
+    const select = document.querySelector("[data-pl-privacy-select=\"" + id + "\"]");
+    if (!select || !select.value) { setStatus("playlist-status", "Choose a privacy level first.", "error"); return; }
+    try {
+      const data = await api("POST", "/api/playlists/" + id + "/privacy", { privacy: select.value });
+      const playlist = playlistById(id);
+      if (playlist) playlist.privacy = data.privacy || select.value;
+      const pill = document.querySelector("[data-pl-privacy-pill=\"" + id + "\"]");
+      if (pill) pill.textContent = data.privacy || select.value;
+      showToast("Playlist privacy set to " + (data.privacy || select.value), "ok");
+      setStatus("playlist-status", "Privacy updated", "ok");
+    } catch (err) {
+      setStatus("playlist-status", friendlyError(err), "error");
+      showErrorToast(err, "playlists");
+    }
+    return;
+  }
   const review = event.target.closest("[data-pl-review]");
   if (review) { reviewPlaylist(review.dataset.plReview); return; }
   const discard = event.target.closest("[data-pl-discard]");
@@ -2766,6 +3304,8 @@ function normalizeDefaults(data) {
     pipelineEmail: !!d.pipelineEmail,
     pipelinePlaylistId: d.pipelinePlaylistId || 0,
     watchSeries: Array.isArray(d.watchSeries) ? d.watchSeries : [],
+    playlistTitleTemplate: d.playlistTitleTemplate || "",
+    playlistDescriptionTemplate: d.playlistDescriptionTemplate || "",
   };
 }
 
@@ -2798,6 +3338,21 @@ function fillChannelSelects() {
     ruleChannel.innerHTML = "<option value=\"\">Any channel</option>" + options;
     if (current) ruleChannel.value = current;
   }
+  // Wave 6 selects fed by the same channel list.
+  const plain = [
+    ["cc-bulk-channel", "Choose a channel…"],
+    ["orphan-channel", "Choose a channel…"],
+    ["tags-channel", "Choose a channel…"],
+    ["insights-channel", "Choose a channel…"],
+    ["goal-channel", "Choose a channel…"],
+  ];
+  plain.forEach(([id, placeholder]) => {
+    const select = el(id);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = "<option value=\"\">" + placeholder + "</option>" + options;
+    if (current) select.value = current;
+  });
 }
 
 // ----------------------------------------------------- suggestions
@@ -3065,13 +3620,42 @@ function renderSeries() {
     " <span class=\"muted-text\">· " + escapeHTML(channelTitle(series.channelId) || ("channel " + series.channelId)) + "</span>" +
     (series.sample && series.sample.length
       ? "<div class=\"muted-text\">e.g. " + series.sample.map((title) => escapeHTML(title)).join(" · ") + "</div>" : "") +
-    "</div><button data-series-wizard=\"" + index + "\" data-write>Rename series</button></div>").join("");
+    "</div><span class=\"row\"><button data-series-playlist=\"" + index + "\" data-write>Create/update playlist</button>" +
+    "<button data-series-wizard=\"" + index + "\" data-write>Rename series</button></span></div>").join("");
 }
 
 el("series-list").addEventListener("click", (event) => {
+  const playlistBtn = event.target.closest("[data-series-playlist]");
+  if (playlistBtn) { createSeriesPlaylist(Number(playlistBtn.dataset.seriesPlaylist)); return; }
   const button = event.target.closest("[data-series-wizard]");
   if (button) openSeriesWizard(Number(button.dataset.seriesWizard));
 });
+
+// Series → playlist in one click (item 132): create the playlist
+// when none matches the series title, otherwise update the match
+// (title compared case-insensitively against the channel's mirror).
+async function createSeriesPlaylist(index) {
+  const series = (state.series || [])[index];
+  if (!series) return;
+  try {
+    let playlistId = 0;
+    try {
+      const playlists = await api("GET", "/api/playlists?channel=" + encodeURIComponent(series.channelId));
+      const wanted = String(series.seriesKey || "").trim().toLowerCase();
+      const match = (playlists || []).find((playlist) =>
+        String(playlist.title || "").trim().toLowerCase() === wanted);
+      if (match) playlistId = match.id;
+    } catch (err) { /* no mirror list: the server creates a fresh playlist */ }
+    const body = { channelId: series.channelId, seriesKey: series.seriesKey };
+    if (playlistId) body.playlistId = playlistId;
+    const data = await api("POST", "/api/series/playlist", body);
+    showToast("Playlist “" + (data.playlistTitle || series.seriesKey) + "”: added " +
+      data.added + " of " + data.total + " video(s)", "ok");
+    loadStatus();
+  } catch (err) {
+    showErrorToast(err, "episodes");
+  }
+}
 
 function openSeriesWizard(index) {
   const series = (state.series || [])[index];
@@ -3500,6 +4084,7 @@ async function loadCommentCentre() {
     const data = await api("GET", "/api/comment-centre");
     state.commentCentre = Array.isArray(data) ? data : (data.rows || data.items || []);
     renderCommentCentre();
+    loadCommentCoverage();
     const pending = state.commentCentre.filter((row) => row.status === "pending").length;
     const needsPin = state.commentCentre.filter((row) => row.needsPin).length;
     setStatus("cc-status", state.commentCentre.length + " video(s) · " + pending + " pending · " + needsPin + " need pinning", "ok");
@@ -3521,6 +4106,7 @@ el("cc-filter-chips").addEventListener("click", (event) => {
 });
 
 function ccRowVisible(row) {
+  if (state.ccGapFilter && !state.ccGapFilter.ids.has(Number(row.videoId))) return false;
   if (state.ccFilter === "posted") return row.status === "posted";
   if (state.ccFilter === "pending") return row.status === "pending";
   if (state.ccFilter === "needspin") return !!row.needsPin;
@@ -3559,11 +4145,17 @@ function renderCommentCentre() {
     const commentText = comment
       ? escapeHTML(String(comment.text || "").slice(0, 140)) + (String(comment.text || "").length > 140 ? "…" : "")
       : "<span class=\"muted-text\">No first comment yet</span>";
-    let html = "<div class=\"cc-row\">" +
+    // Pinned-text drift (item 129): only when the DTO actually
+    // carries pinnedText — the current commentDTO does not, so this
+    // hint stays dormant rather than guessing.
+    const pinHint = comment && typeof comment.pinnedText === "string" && comment.pinnedText !== "" &&
+      comment.pinnedText !== (comment.text || "")
+      ? " <span class=\"warn-badge\">text changed since pin</span>" : "";
+    let html = "<div class=\"cc-row\" id=\"cc-row-" + row.videoId + "\">" +
       "<div class=\"cc-video\">" + thumbnailHTML(row) + "<span><strong>" + escapeHTML(row.title || "") + "</strong>" +
       "<span class=\"muted-text\"> · " + escapeHTML(channelTitle(row.channelId) || ("channel " + row.channelId)) + "</span></span></div>" +
       "<div class=\"cc-status\">" + statusPill + "</div>" +
-      "<div class=\"cc-comment\">" + commentText + "</div>" +
+      "<div class=\"cc-comment\">" + commentText + pinHint + "</div>" +
       "<div class=\"cc-pin\">" + pinState + "</div>" +
       "<div class=\"cc-actions row\">" + actions + "</div>";
     if (!comment && row.status === "pending") {
@@ -3701,6 +4293,185 @@ el("cc-list").addEventListener("click", async (event) => {
   }
 });
 
+// -------------------------------------- comment centre, wave 6
+// Coverage report (item 127): per channel, how many public videos
+// already have a first comment, with the gaps one click away.
+async function loadCommentCoverage() {
+  const box = el("cc-coverage");
+  if (!box) return;
+  try {
+    const reports = await api("GET", "/api/comment-coverage");
+    state.ccCoverage = Array.isArray(reports) ? reports : [];
+    renderCommentCoverage();
+  } catch (err) {
+    box.innerHTML = "";
+  }
+}
+
+function renderCommentCoverage() {
+  const box = el("cc-coverage");
+  if (!box) return;
+  const reports = state.ccCoverage || [];
+  if (reports.length === 0) { box.innerHTML = ""; return; }
+  let html = reports.map((report) => {
+    const pct = Math.round(report.percent || 0);
+    const active = state.ccGapFilter && String(state.ccGapFilter.channelId) === String(report.channelId);
+    return "<div class=\"cc-coverage-row\"><span><strong>" + escapeHTML(channelTitle(report.channelId) || ("Channel " + report.channelId)) +
+      "</strong> — " + pct + "% of public videos have a first comment (" + report.withFirst + "/" + report.public + ")</span>" +
+      (report.gapCount > 0
+        ? "<button data-cc-gaps=\"" + report.channelId + "\">" + (active ? "Showing gaps" : "View gaps (" + report.gapCount + ")") + "</button>"
+        : "<span class=\"result-ok\">No gaps ✓</span>") + "</div>";
+  }).join("");
+  if (state.ccGapFilter) {
+    html += "<div class=\"cc-coverage-row\"><span>Filtered to the gap videos of " +
+      escapeHTML(channelTitle(state.ccGapFilter.channelId) || ("channel " + state.ccGapFilter.channelId)) + ".</span>" +
+      "<button data-cc-gaps-clear=\"1\">Clear gap filter</button></div>";
+  }
+  box.innerHTML = html;
+}
+
+el("cc-coverage").addEventListener("click", (event) => {
+  if (event.target.closest("[data-cc-gaps-clear]")) {
+    state.ccGapFilter = null;
+    renderCommentCoverage();
+    renderCommentCentre();
+    return;
+  }
+  const button = event.target.closest("[data-cc-gaps]");
+  if (!button) return;
+  const report = (state.ccCoverage || []).find((item) => String(item.channelId) === button.dataset.ccGaps);
+  if (!report) return;
+  state.ccGapFilter = { channelId: report.channelId, ids: new Set((report.gapVideoIds || []).map(Number)) };
+  renderCommentCoverage();
+  renderCommentCentre();
+});
+
+// Link checker (item 126): distinct URLs in first comments, checked
+// once each by the server (capped at 20 unique URLs).
+el("cc-check-links-btn").addEventListener("click", async () => {
+  const box = el("cc-link-results");
+  box.classList.remove("hidden");
+  box.innerHTML = "<h2>Comment links</h2><p class=\"muted-text\">Checking the links in your first comments…</p>";
+  try {
+    const results = await api("POST", "/api/comments/check-links", {});
+    const list = Array.isArray(results) ? results : [];
+    const dead = list.filter((item) => !item.ok);
+    let html = "<div class=\"card-head\"><h2>Comment links</h2><button id=\"cc-link-close\">Close</button></div>" +
+      "<p>" + list.length + " link(s) checked, " + dead.length + " dead" +
+      (list.length >= 20 ? " — the checker stops at 20 unique URLs per run, so more links may exist." : "") + "</p>";
+    if (list.length === 0) {
+      html += "<p class=\"muted-text\">No URLs found in any first comment.</p>";
+    } else if (dead.length === 0) {
+      html += "<p class=\"result-ok\">Every checked link is alive ✓</p>";
+    } else {
+      html += dead.map((item) =>
+        "<div class=\"cc-link-row\"><a href=\"" + escapeHTML(item.url) + "\" target=\"_blank\" rel=\"noopener\">" + escapeHTML(item.url) + "</a>" +
+        "<span class=\"result-fail\">" + (item.error ? escapeHTML(item.error) : "HTTP " + item.status) + "</span>" +
+        "<button data-cc-goto-video=\"" + item.videoId + "\">Show video in centre</button></div>").join("");
+    }
+    box.innerHTML = html;
+    el("cc-link-close").addEventListener("click", () => box.classList.add("hidden"));
+  } catch (err) {
+    box.innerHTML = "<h2>Comment links</h2><p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+    showErrorToast(err, "commentcentre");
+  }
+});
+
+el("cc-link-results").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-cc-goto-video]");
+  if (!button) return;
+  state.ccGapFilter = null;
+  state.ccFilter = "all";
+  document.querySelectorAll("#cc-filter-chips .chip").forEach((item) =>
+    item.classList.toggle("is-active", item.dataset.ccFilter === "all"));
+  renderCommentCoverage();
+  renderCommentCentre();
+  const row = el("cc-row-" + button.dataset.ccGotoVideo);
+  if (row) {
+    row.scrollIntoView({ block: "center" });
+    row.classList.add("cc-flash");
+    setTimeout(() => row.classList.remove("cc-flash"), 1600);
+  }
+});
+
+// Bulk post first comments (item 130): preview the change-set,
+// untick rows to exclude them, then post with per-item results.
+el("cc-bulk-channel").addEventListener("change", async () => {
+  const channelId = el("cc-bulk-channel").value;
+  el("cc-bulk-results").innerHTML = "";
+  el("cc-bulk-post-btn").disabled = true;
+  state.ccBulkRows = [];
+  if (!channelId) return;
+  const defaults = await fetchChannelDefaults(channelId);
+  if (defaults && defaults.commentTemplate && !el("cc-bulk-template").value) {
+    el("cc-bulk-template").value = defaults.commentTemplate;
+  }
+});
+
+el("cc-bulk-preview-btn").addEventListener("click", async () => {
+  const channelId = el("cc-bulk-channel").value;
+  if (!channelId) { setStatus("cc-bulk-status", "Choose a channel first.", "error"); return; }
+  setStatus("cc-bulk-status", "Rendering the change-set…");
+  try {
+    const rows = await api("POST", "/api/comments/bulk-preview", {
+      channelId: Number(channelId),
+      template: el("cc-bulk-template").value,
+    });
+    state.ccBulkRows = Array.isArray(rows) ? rows : [];
+    renderBulkCommentPreview();
+    setStatus("cc-bulk-status", state.ccBulkRows.length + " pending video(s) on this channel", "ok");
+  } catch (err) {
+    setStatus("cc-bulk-status", friendlyError(err), "error");
+    showErrorToast(err, "commentcentre");
+  }
+});
+
+function renderBulkCommentPreview() {
+  const box = el("cc-bulk-results");
+  const rows = state.ccBulkRows || [];
+  el("cc-bulk-post-btn").disabled = rows.length === 0;
+  if (rows.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">No pending videos — every public video on this channel already has a first comment.</p>";
+    return;
+  }
+  box.innerHTML = "<table class=\"grid\"><thead><tr><th>Post</th><th>Video</th><th>Comment that will be posted</th></tr></thead><tbody>" +
+    rows.map((row, index) =>
+      "<tr><td><input type=\"checkbox\" class=\"cc-bulk-include\" data-bulk-index=\"" + index + "\" checked></td>" +
+      "<td>" + escapeHTML(row.title || ("Video " + row.videoId)) + "</td>" +
+      "<td>" + escapeHTML(row.text || "") + "</td></tr>").join("") + "</tbody></table>";
+}
+
+el("cc-bulk-post-btn").addEventListener("click", async () => {
+  const picked = Array.from(document.querySelectorAll(".cc-bulk-include:checked"))
+    .map((box) => state.ccBulkRows[Number(box.dataset.bulkIndex)])
+    .filter(Boolean)
+    .map((row) => ({ videoId: row.videoId, title: row.title, text: row.text }));
+  if (picked.length === 0) { setStatus("cc-bulk-status", "Tick at least one row to post.", "error"); return; }
+  const button = el("cc-bulk-post-btn");
+  button.disabled = true;
+  setStatus("cc-bulk-status", "Posting " + picked.length + " first comment(s)…");
+  startTask("cc-bulk", "Posting first comments");
+  try {
+    const data = await api("POST", "/api/comments/bulk-post", { items: picked });
+    const results = data.results || [];
+    el("cc-bulk-results").innerHTML = "<p><strong>" + (data.posted || 0) + " posted</strong> of " + picked.length + ":</p>" +
+      results.map((row) => row.error
+        ? "<div class=\"cc-link-row\"><span>" + escapeHTML(row.title || ("Video " + row.videoId)) + "</span><span class=\"result-fail\">✗ " + escapeHTML(row.error) + "</span></div>"
+        : "<div class=\"cc-link-row\"><span>" + escapeHTML(row.title || ("Video " + row.videoId)) + "</span><span class=\"result-ok\">✓ Posted</span></div>").join("");
+    setStatus("cc-bulk-status", "Bulk post finished: " + (data.posted || 0) + " posted", "ok");
+    showToast("Bulk post: " + (data.posted || 0) + " first comment(s) posted", "ok");
+    state.ccBulkRows = [];
+    await loadCommentCentre();
+    loadStatus();
+  } catch (err) {
+    setStatus("cc-bulk-status", friendlyError(err), "error");
+    showErrorToast(err, "commentcentre");
+    button.disabled = false;
+  } finally {
+    endTask("cc-bulk");
+  }
+});
+
 // ------------------------------------------- channel defaults card
 el("cd-channel").addEventListener("change", loadChannelDefaultsCard);
 
@@ -3714,6 +4485,8 @@ async function loadChannelDefaultsCard() {
   el("cd-rename-template").value = defaults.renameTemplate;
   el("cd-cadence").value = defaults.cadenceDays || "";
   el("cd-comment-template").value = defaults.commentTemplate;
+  el("cd-playlist-title-template").value = defaults.playlistTitleTemplate;
+  el("cd-playlist-desc-template").value = defaults.playlistDescriptionTemplate;
   el("cd-pipeline-comment").checked = defaults.pipelineComment;
   el("cd-pipeline-email").checked = defaults.pipelineEmail;
   try {
@@ -3746,6 +4519,8 @@ el("cd-save-btn").addEventListener("click", async () => {
     renameTemplate: el("cd-rename-template").value,
     cadenceDays: Number(el("cd-cadence").value || 0),
     commentTemplate: el("cd-comment-template").value,
+    playlistTitleTemplate: el("cd-playlist-title-template").value,
+    playlistDescriptionTemplate: el("cd-playlist-desc-template").value,
     pipelineComment: el("cd-pipeline-comment").checked,
     pipelineEmail: el("cd-pipeline-email").checked,
     pipelinePlaylistId: Number(el("cd-pipeline-playlist").value || 0),
@@ -3832,7 +4607,9 @@ async function loadABTests() {
         "<div class=\"inline-form\"><input data-ab-note=\"" + test.id + "\" placeholder=\"CTR note\">" +
         "<button data-ab-snap=\"" + test.id + "\">Snapshot</button>" +
         "<button data-ab-win=\"a\" data-ab-id=\"" + test.id + "\">Pick A</button>" +
-        "<button data-ab-win=\"b\" data-ab-id=\"" + test.id + "\">Pick B</button></div></div>";
+        "<button data-ab-win=\"b\" data-ab-id=\"" + test.id + "\">Pick B</button>" +
+        "<button data-ab-results=\"" + test.id + "\">Results</button></div>" +
+        "<div class=\"ab-results hidden\" id=\"ab-results-" + test.id + "\"></div></div>";
     }).join("") ||
       "<div class=\"empty-state\"><h3>No A/B tests yet</h3>" +
       "<p>An A/B test tries two titles on one video. Create one with the form below, take snapshots as views come in, then pick the winner and yt-manage applies it.</p></div>";
@@ -3844,7 +4621,116 @@ async function loadABTests() {
 
 el("ab-load-btn").addEventListener("click", loadABTests);
 
+// A/B results view (item 143) + auto-schedule (item 144).
+function toLocalInputValue(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function toRFC3339(localValue) {
+  if (!localValue) return "";
+  const date = new Date(localValue);
+  return isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function testDurationText(test) {
+  const start = new Date(test.createdAt).getTime();
+  if (isNaN(start)) return "";
+  const end = test.isActive ? Date.now() : new Date(test.updatedAt).getTime();
+  if (isNaN(end) || end < start) return "";
+  const hours = Math.floor((end - start) / 3600000);
+  if (hours < 24) return hours + (hours === 1 ? " hour" : " hours");
+  const days = Math.floor(hours / 24);
+  return days + (days === 1 ? " day" : " days") + (test.isActive ? " so far" : "");
+}
+
+async function toggleABResults(id) {
+  const box = el("ab-results-" + id);
+  if (!box) return;
+  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  box.innerHTML = "<p class=\"muted-text\">Loading results…</p>";
+  try {
+    const data = await api("GET", "/api/ab-tests/" + id + "/results");
+    renderABResults(id, data);
+  } catch (err) {
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+  }
+}
+
+function renderABResults(id, data) {
+  const box = el("ab-results-" + id);
+  if (!box) return;
+  const test = data.test || {};
+  const video = data.video || {};
+  const snapshots = data.snapshots || test.snapshots || [];
+  const schedule = data.schedule || null;
+  const delta = data.deltaViews || 0;
+  let html = "<div class=\"preview-label\">Results</div>" +
+    "<p><strong>A:</strong> " + escapeHTML(test.variantA || "") + "<br><strong>B:</strong> " + escapeHTML(test.variantB || "") + "</p>" +
+    "<p class=\"muted-text\">Running for " + escapeHTML(testDurationText(test) || "—") +
+    " · Video now: " + escapeHTML(video.title || ("Video " + test.videoId)) + " — " +
+    (video.viewCount || 0) + " views, " + (video.commentCount || 0) + " comments</p>" +
+    "<p>Snapshot views: first " + (data.firstSnapshotViews || 0) + " → last " + (data.lastSnapshotViews || 0) +
+    " (<strong>" + (delta >= 0 ? "+" : "") + delta + "</strong> views across snapshots)</p>";
+  if (snapshots.length) {
+    html += "<ul class=\"parts\">" + snapshots.map((snap) =>
+      "<li>" + escapeHTML(snap.capturedAt) + ": views " + escapeHTML(snap.viewsAContext) +
+      (snap.ctrNote ? " — " + escapeHTML(snap.ctrNote) : "") + "</li>").join("") + "</ul>";
+  } else {
+    html += "<p class=\"muted-text\">No snapshots yet — take one from the test card so the results are comparable.</p>";
+  }
+  html += "<div class=\"row\"><button data-ab-win=\"a\" data-ab-id=\"" + id + "\" data-write>Pick winner A</button>" +
+    "<button data-ab-win=\"b\" data-ab-id=\"" + id + "\" data-write>Pick winner B</button></div>";
+  // Auto-schedule form (item 144): switch / mid snapshot / end.
+  html += "<h4>Auto-schedule</h4>" +
+    "<p class=\"muted-text\">The automation loop applies each step when its time comes, while the app is serving. Leave a step empty to clear it.</p>" +
+    "<label>Switch to variant B <input type=\"datetime-local\" id=\"ab-sched-switch-" + id + "\" value=\"" +
+    escapeHTML(toLocalInputValue(schedule ? schedule.switchAt : "")) + "\"></label>" +
+    "<label>Mid-way snapshot <input type=\"datetime-local\" id=\"ab-sched-snapshot-" + id + "\" value=\"" +
+    escapeHTML(toLocalInputValue(schedule ? schedule.snapshotAt : "")) + "\"></label>" +
+    "<label>End test <input type=\"datetime-local\" id=\"ab-sched-end-" + id + "\" value=\"" +
+    escapeHTML(toLocalInputValue(schedule ? schedule.endAt : "")) + "\"></label>";
+  if (schedule) {
+    const flags = [];
+    if (schedule.switched) flags.push("switched ✓");
+    if (schedule.snapshotted) flags.push("snapshot taken ✓");
+    if (schedule.ended) flags.push("ended ✓");
+    html += "<p class=\"muted-text\">Saved schedule: switch " + escapeHTML(schedule.switchAt || "—") +
+      " · snapshot " + escapeHTML(schedule.snapshotAt || "—") + " · end " + escapeHTML(schedule.endAt || "—") +
+      (flags.length ? " · " + flags.join(" · ") : "") + "</p>";
+  }
+  html += "<div class=\"row\"><button class=\"primary\" data-ab-sched-save=\"" + id + "\" data-write>Save schedule</button></div>" +
+    "<div class=\"status-line\" id=\"ab-sched-status-" + id + "\"></div>";
+  box.innerHTML = html;
+}
+
 el("ab-list").addEventListener("click", async (event) => {
+  const resultsBtn = event.target.closest("[data-ab-results]");
+  if (resultsBtn) { toggleABResults(resultsBtn.dataset.abResults); return; }
+  const schedSave = event.target.closest("[data-ab-sched-save]");
+  if (schedSave) {
+    const id = schedSave.dataset.abSchedSave;
+    const body = {
+      switchAt: toRFC3339(el("ab-sched-switch-" + id).value),
+      snapshotAt: toRFC3339(el("ab-sched-snapshot-" + id).value),
+      endAt: toRFC3339(el("ab-sched-end-" + id).value),
+    };
+    try {
+      await api("POST", "/api/ab-tests/" + id + "/schedule", body);
+      setStatus("ab-sched-status-" + id, "Schedule saved", "ok");
+      showToast("A/B auto-schedule saved", "ok");
+      const data = await api("GET", "/api/ab-tests/" + id + "/results");
+      renderABResults(id, data);
+    } catch (err) {
+      setStatus("ab-sched-status-" + id, friendlyError(err), "error");
+      showErrorToast(err, "abtests");
+    }
+    return;
+  }
   const snap = event.target.closest("[data-ab-snap]");
   const win = event.target.closest("[data-ab-win]");
   try {
@@ -3877,6 +4763,287 @@ el("ab-create-form").addEventListener("submit", async (event) => {
     await loadABTests();
   } catch (err) {
     setStatus("ab-create-status", friendlyError(err), "error");
+  }
+});
+
+// ============================================================ wave 6
+// Insights: dashboard, scorecards, performers, heatmap, growth and
+// goals (items 141-150). Every panel renders its meta line (item
+// 150): source, generated-at and window, straight from the API.
+
+function insightMetaLine(meta) {
+  if (!meta) return "";
+  return "<p class=\"muted-text insight-meta\">Source: " + escapeHTML(meta.source || "local mirror") +
+    (meta.generatedAt ? " · Generated " + escapeHTML(meta.generatedAt) : "") +
+    (meta.windowDays ? " · Window: last " + meta.windowDays + " days" : "") + "</p>";
+}
+
+function insightsChannelId() {
+  return el("insights-channel").value || LS.get("scopeChannel", "") || "";
+}
+
+async function loadInsights() {
+  fillChannelSelects();
+  await ensureAccountsLoaded();
+  const accountSelect = el("insights-account");
+  const accounts = state.accounts || [];
+  const currentAccount = accountSelect.value;
+  accountSelect.innerHTML = "<option value=\"\">Choose an account…</option>" + accounts.map((account) =>
+    "<option value=\"" + account.id + "\">" + escapeHTML(account.label || ("Account " + account.id)) + "</option>").join("");
+  if (currentAccount) accountSelect.value = currentAccount;
+  if (!accountSelect.value && accounts.length) accountSelect.value = String(accounts[0].id);
+
+  const channelId = insightsChannelId();
+  if (channelId) el("insights-channel").value = channelId;
+  updateInsightExportLinks();
+  if (!channelId) {
+    setStatus("insights-status", "Choose a channel to load its insights.", "error");
+    return;
+  }
+  setStatus("insights-status", "Loading insights from the local mirror…");
+  await Promise.all([
+    loadInsightsDashboard(channelId),
+    loadInsightsScorecards(channelId),
+    loadInsightsPerformers(channelId),
+    loadInsightsHeatmap(channelId),
+  ]);
+  loadInsightsGrowth();
+  loadGoals();
+  setStatus("insights-status", "Insights for " + (channelTitle(channelId) || ("channel " + channelId)), "ok");
+}
+
+function updateInsightExportLinks() {
+  const channelId = insightsChannelId();
+  const suffix = channelId ? "&channelId=" + encodeURIComponent(channelId) : "";
+  el("insights-export-performers").href = "/api/insights/export?kind=performers" + suffix;
+  el("insights-export-scorecards").href = "/api/insights/export?kind=scorecards" + suffix;
+}
+
+el("insights-load-btn").addEventListener("click", loadInsights);
+el("insights-channel").addEventListener("change", loadInsights);
+
+// Dashboard (item 141).
+async function loadInsightsDashboard(channelId) {
+  const box = el("insights-dashboard");
+  try {
+    const data = await api("GET", "/api/insights/dashboard?channelId=" + encodeURIComponent(channelId));
+    const months = data.uploadsByMonth || [];
+    const maxMonth = Math.max(1, ...months.map((row) => row.count || 0));
+    box.innerHTML =
+      "<div class=\"stat-grid\">" +
+      [["Videos", data.totalVideos || 0], ["Views", data.totalViews || 0], ["Comments", data.totalComments || 0],
+       ["Comment coverage", Math.round(data.commentCoveragePct || 0) + "%"],
+       ["Schedule adherence", Math.round(data.scheduleAdherencePct || 0) + "% (" + (data.scheduledPublished || 0) + "/" + (data.scheduledTotal || 0) + ")"]]
+        .map((row) => "<div class=\"stat\"><span class=\"stat-num\">" + row[1] + "</span><span class=\"stat-label\">" + row[0] + "</span></div>").join("") +
+      "</div>" +
+      "<h3>Uploads by month</h3>" +
+      (months.length ? months.map((row) =>
+        "<div class=\"bar-row\"><span class=\"bar-label\">" + escapeHTML(row.month) + "</span>" +
+        "<span class=\"bar-track\"><span class=\"bar-fill\" style=\"width:" + Math.round(((row.count || 0) / maxMonth) * 100) + "%\"></span></span>" +
+        "<span class=\"bar-value\">" + row.count + "</span></div>").join("")
+        : "<p class=\"muted-text\">No uploads in the mirror yet.</p>") +
+      "<h3>Views by series</h3>" +
+      ((data.viewsBySeries || []).length
+        ? "<table class=\"grid\"><thead><tr><th>Series</th><th>Videos</th><th>Views</th><th>Comments</th></tr></thead><tbody>" +
+          data.viewsBySeries.map((row) =>
+            "<tr><td>" + escapeHTML(row.seriesKey) + "</td><td>" + row.videos + "</td><td>" + row.views + "</td><td>" + row.comments + "</td></tr>").join("") +
+          "</tbody></table>"
+        : "<p class=\"muted-text\">No series detected on this channel yet.</p>") +
+      insightMetaLine(data.meta);
+  } catch (err) {
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+  }
+}
+
+// Series scorecards (item 142) with an inline sparkline of views.
+function sparklineSVG(values) {
+  if (!values || values.length === 0) return "";
+  const max = Math.max(1, ...values);
+  const width = 120;
+  const height = 28;
+  const step = values.length > 1 ? width / (values.length - 1) : 0;
+  const points = values.map((value, index) =>
+    (index * step).toFixed(1) + "," + (height - 3 - (value / max) * (height - 6)).toFixed(1)).join(" ");
+  return "<svg class=\"sparkline\" width=\"" + width + "\" height=\"" + height + "\" aria-hidden=\"true\">" +
+    "<polyline points=\"" + points + "\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\"></polyline></svg>";
+}
+
+async function loadInsightsScorecards(channelId) {
+  const box = el("insights-scorecards");
+  try {
+    const data = await api("GET", "/api/insights/scorecards?channelId=" + encodeURIComponent(channelId));
+    const cards = data.scorecards || [];
+    box.innerHTML = (cards.length ? cards.map((card) =>
+      "<h3>" + escapeHTML(card.seriesKey) + " " + sparklineSVG((card.episodes || []).map((ep) => ep.views || 0)) + "</h3>" +
+      "<table class=\"grid\"><thead><tr><th>Episode</th><th>Title</th><th>Views</th><th>Comments</th></tr></thead><tbody>" +
+      (card.episodes || []).map((ep) =>
+        "<tr" + (ep.dropoff ? " class=\"is-dropoff\"" : "") + "><td>" + ep.episodeNumber + "</td><td>" +
+        escapeHTML(ep.title || "") + (ep.dropoff ? " <span class=\"warn-badge\">drop-off</span>" : "") +
+        "</td><td>" + ep.views + "</td><td>" + ep.comments + "</td></tr>").join("") +
+      "</tbody></table>").join("")
+      : "<p class=\"muted-text\">No series scorecards yet — a series needs at least two episodes in the mirror.</p>") +
+      insightMetaLine(data.meta);
+  } catch (err) {
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+  }
+}
+
+// Best/worst performers (item 145).
+async function loadInsightsPerformers(channelId) {
+  const box = el("insights-performers");
+  const by = state.insightsBy || "views";
+  el("performers-by-views").classList.toggle("is-active", by === "views");
+  el("performers-by-comments").classList.toggle("is-active", by === "comments");
+  try {
+    const data = await api("GET", "/api/insights/performers?channelId=" + encodeURIComponent(channelId) + "&by=" + by);
+    const renderList = (title, rows) =>
+      "<h3>" + title + "</h3>" + ((rows || []).length
+        ? "<ol class=\"performer-list\">" + rows.map((row) =>
+          "<li><span class=\"performer-title\">" + escapeHTML(row.title || ("Video " + row.videoId)) + "</span>" +
+          "<span class=\"muted-text\">" + (row.views || 0) + " views · " + (row.comments || 0) + " comments</span></li>").join("") + "</ol>"
+        : "<p class=\"muted-text\">Nothing here yet.</p>");
+    box.innerHTML = renderList("Top 10 by " + by, data.top) + renderList("Bottom 10 by " + by, data.bottom) +
+      insightMetaLine(data.meta);
+  } catch (err) {
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+  }
+}
+
+el("performers-by-views").addEventListener("click", () => {
+  state.insightsBy = "views";
+  const channelId = insightsChannelId();
+  if (channelId) loadInsightsPerformers(channelId);
+});
+el("performers-by-comments").addEventListener("click", () => {
+  state.insightsBy = "comments";
+  const channelId = insightsChannelId();
+  if (channelId) loadInsightsPerformers(channelId);
+});
+
+// Publish-time heatmap (item 146): weekday rows (Monday first) ×
+// hour columns, intensity from the publish count in each cell.
+async function loadInsightsHeatmap(channelId) {
+  const box = el("insights-heatmap");
+  const windowDays = el("heatmap-window").value || "365";
+  try {
+    const data = await api("GET", "/api/insights/heatmap?channelId=" + encodeURIComponent(channelId) +
+      "&windowDays=" + encodeURIComponent(windowDays));
+    const cells = new Map();
+    let max = 0;
+    (data.cells || []).forEach((cell) => {
+      cells.set(cell.weekday + ":" + cell.hour, cell);
+      if (cell.count > max) max = cell.count;
+    });
+    const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    let html = "<div class=\"heat-wrap\"><div class=\"heat-grid\">";
+    html += "<div class=\"heat-corner\"></div>" + Array.from({ length: 24 }, (_, hour) =>
+      "<div class=\"heat-hour\">" + hour + "</div>").join("");
+    order.forEach((weekday, rowIndex) => {
+      html += "<div class=\"heat-day\">" + dayNames[rowIndex] + "</div>";
+      for (let hour = 0; hour < 24; hour++) {
+        const cell = cells.get(weekday + ":" + hour);
+        const count = cell ? cell.count : 0;
+        const alpha = count && max ? (0.12 + 0.88 * (count / max)).toFixed(2) : "0";
+        html += "<div class=\"heat-cell\" style=\"--heat:" + alpha + "\" title=\"" +
+          escapeHTML(dayNames[rowIndex] + " " + String(hour).padStart(2, "0") + ":00 — " + count +
+            " publish(es)" + (cell ? ", avg " + Math.round(cell.avgViews || 0) + " views" : "")) + "\">" +
+          (count || "") + "</div>";
+      }
+    });
+    html += "</div></div>" + insightMetaLine(data.meta);
+    box.innerHTML = html;
+  } catch (err) {
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+  }
+}
+
+el("heatmap-window").addEventListener("change", () => {
+  const channelId = insightsChannelId();
+  if (channelId) loadInsightsHeatmap(channelId);
+});
+
+// Growth snapshots (item 147): the diff line is the server's own
+// words, shown verbatim above the snapshot table.
+async function loadInsightsGrowth() {
+  const box = el("insights-growth");
+  const accountId = el("insights-account").value;
+  if (!accountId) {
+    box.innerHTML = "<p class=\"muted-text\">Pick an account to see its snapshots — snapshots are recorded at each sync.</p>";
+    return;
+  }
+  try {
+    const data = await api("GET", "/api/insights/growth?accountId=" + encodeURIComponent(accountId));
+    const snapshots = data.snapshots || [];
+    box.innerHTML = "<p><strong>" + escapeHTML(data.diff || "") + "</strong></p>" +
+      (snapshots.length
+        ? "<table class=\"grid\"><thead><tr><th>Snapshot</th><th>Videos</th><th>Scheduled</th><th>Views</th><th>Comments</th></tr></thead><tbody>" +
+          snapshots.map((point) =>
+            "<tr><td>" + escapeHTML(point.at || "") + "</td><td>" + point.videos + "</td><td>" + point.scheduled +
+            "</td><td>" + point.views + "</td><td>" + point.comments + "</td></tr>").join("") + "</tbody></table>"
+        : "<p class=\"muted-text\">No snapshots yet for this account.</p>") +
+      "<p class=\"muted-text insight-meta\">Source: growth snapshots recorded at each sync for this account.</p>";
+  } catch (err) {
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+  }
+}
+
+el("insights-account").addEventListener("change", loadInsightsGrowth);
+
+// Goal tracking (item 149).
+async function loadGoals() {
+  const box = el("goals-list");
+  try {
+    const goals = await api("GET", "/api/goals");
+    const list = Array.isArray(goals) ? goals : [];
+    if (list.length === 0) {
+      box.innerHTML = "<p class=\"muted-text\">No goals yet — add one below.</p>";
+      return;
+    }
+    box.innerHTML = list.map((goal) =>
+      "<div class=\"goal-row\"><div class=\"goal-head\"><strong>" + escapeHTML(goal.text || "") + "</strong>" +
+      " <span class=\"pill\">" + escapeHTML(goal.type || "") + "</span>" +
+      " <span class=\"muted-text\">" + escapeHTML(channelTitle(goal.channelId) || ("channel " + goal.channelId)) + "</span>" +
+      "<button class=\"goal-del\" data-goal-del=\"" + escapeHTML(goal.id) + "\" data-write>Delete</button></div>" +
+      "<div class=\"goal-bar\"><div class=\"goal-fill\" style=\"width:" + Math.min(100, Math.round(goal.progress || 0)) + "%\"></div></div>" +
+      "<span class=\"muted-text\">" + Math.round(goal.progress || 0) + "% — " + escapeHTML(goal.detail || "") + "</span></div>").join("");
+  } catch (err) {
+    box.innerHTML = "<p class=\"muted-text\">Goals could not be loaded.</p>";
+  }
+}
+
+el("goals-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-goal-del]");
+  if (!button) return;
+  try {
+    await api("DELETE", "/api/goals/" + encodeURIComponent(button.dataset.goalDel));
+    showToast("Goal deleted", "ok");
+    loadGoals();
+  } catch (err) {
+    showErrorToast(err, "insights");
+  }
+});
+
+el("goal-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const text = el("goal-text").value.trim();
+  const channelId = el("goal-channel").value;
+  if (!text || !channelId) { setStatus("goal-status", "A goal needs text and a channel.", "error"); return; }
+  const type = el("goal-type").value;
+  const body = { text, type, channelId: Number(channelId), target: Number(el("goal-target").value || 0), targetDate: "" };
+  if (type === "scheduled-through") {
+    body.targetDate = el("goal-date").value || "";
+    if (!body.targetDate) { setStatus("goal-status", "Pick a target date for a scheduled-through goal.", "error"); return; }
+  }
+  try {
+    await api("POST", "/api/goals", body);
+    setStatus("goal-status", "Goal added", "ok");
+    showToast("Goal added", "ok");
+    el("goal-text").value = "";
+    loadGoals();
+  } catch (err) {
+    setStatus("goal-status", friendlyError(err), "error");
+    showErrorToast(err, "insights");
   }
 });
 
@@ -4454,6 +5621,7 @@ const PALETTE_COMMANDS = [
   { label: "Go to Automation", run: () => navigate("automation") },
   { label: "Go to Comment Centre", run: () => navigate("commentcentre") },
   { label: "Go to Playlists", run: () => navigate("playlists") },
+  { label: "Go to Insights", run: () => navigate("insights") },
   { label: "Go to Accounts", run: () => navigate("accounts") },
   { label: "Go to History", run: () => navigate("history") },
   { label: "Go to Settings", run: () => navigate("settings") },
@@ -4653,3 +5821,86 @@ setToggleChips(false, false, false);
     navigate(LS.get("lastSection", "home"), true);
   }
 })();
+
+// ----------------------------------------------------- tags manager
+// Item 140: all tags on a channel with counts, from the mirror
+// (tags are mirrored on sync). Rename/merge/remove previews the
+// affected video count before anything is sent to YouTube.
+async function loadTags() {
+  const channelId = el("tags-channel").value;
+  const box = el("tags-list");
+  if (!channelId) { setStatus("tags-status", "Choose a channel first.", "error"); return; }
+  setStatus("tags-status", "Loading tags…");
+  try {
+    const tags = await api("GET", "/api/tags?channelId=" + encodeURIComponent(channelId));
+    const list = Array.isArray(tags) ? tags : [];
+    box.dataset.channel = channelId;
+    box.dataset.tags = JSON.stringify(list);
+    setStatus("tags-status", list.length + " tag(s) on this channel", "ok");
+    if (list.length === 0) {
+      box.innerHTML = "<p class=\"muted-text\">No tags mirrored yet — run a sync first; tags arrive with it.</p>";
+      return;
+    }
+    box.innerHTML = list.map((entry, index) =>
+      "<div class=\"tag-row\"><strong>" + escapeHTML(entry.tag) + "</strong>" +
+      " <span class=\"pill\">" + entry.count + " video(s)</span>" +
+      " <button data-tag-rename=\"" + index + "\" data-write>Rename / merge / remove…</button>" +
+      "<div class=\"tag-rename-box hidden\" id=\"tag-rename-" + index + "\">" +
+      "<input type=\"text\" id=\"tag-new-name-" + index + "\" placeholder=\"New tag name (empty = remove)\">" +
+      "<p class=\"muted-text\" id=\"tag-preview-" + index + "\"></p>" +
+      "<button data-tag-apply=\"" + index + "\" class=\"primary\" data-write>Apply</button>" +
+      " <button data-tag-cancel=\"" + index + "\">Cancel</button>" +
+      "<div class=\"status-line\" id=\"tag-status-" + index + "\"></div></div></div>").join("");
+  } catch (err) {
+    setStatus("tags-status", friendlyError(err), "error");
+    showErrorToast(err, "videos");
+  }
+}
+
+el("tags-load-btn").addEventListener("click", loadTags);
+
+el("tags-list").addEventListener("click", async (event) => {
+  const box = el("tags-list");
+  const channelId = box.dataset.channel;
+  let tags = [];
+  try { tags = JSON.parse(box.dataset.tags || "[]"); } catch (err) { tags = []; }
+  const openBtn = event.target.closest("[data-tag-rename]");
+  if (openBtn) {
+    const index = Number(openBtn.dataset.tagRename);
+    const entry = tags[index];
+    const panel = el("tag-rename-" + index);
+    if (!entry || !panel) return;
+    panel.classList.remove("hidden");
+    el("tag-preview-" + index).textContent =
+      "Preview: “" + entry.tag + "” is on " + entry.count + " video(s). Applying updates each video on YouTube; an existing target name merges the tags.";
+    return;
+  }
+  const cancelBtn = event.target.closest("[data-tag-cancel]");
+  if (cancelBtn) {
+    el("tag-rename-" + Number(cancelBtn.dataset.tagCancel)).classList.add("hidden");
+    return;
+  }
+  const applyBtn = event.target.closest("[data-tag-apply]");
+  if (applyBtn) {
+    const index = Number(applyBtn.dataset.tagApply);
+    const entry = tags[index];
+    if (!entry || !channelId) return;
+    const to = el("tag-new-name-" + index).value.trim();
+    setStatus("tag-status-" + index, "Applying on YouTube…");
+    try {
+      const result = await api("POST", "/api/tags/rename", {
+        channelId: Number(channelId), from: entry.tag, to: to,
+      });
+      const failures = (result && result.failures) || [];
+      setStatus("tag-status-" + index,
+        "Updated " + (result ? result.changed : 0) + " video(s)" +
+        (failures.length ? "; failed: " + failures.join("; ") : "") + ".",
+        failures.length ? "error" : "ok");
+      showToast("Tag “" + entry.tag + "” updated on " + (result ? result.changed : 0) + " video(s)", "ok");
+      loadTags();
+    } catch (err) {
+      setStatus("tag-status-" + index, friendlyError(err), "error");
+      showErrorToast(err, "videos");
+    }
+  }
+});

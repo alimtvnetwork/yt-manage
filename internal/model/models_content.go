@@ -17,6 +17,7 @@ type Video struct {
 	LikeCount       int64      `json:"like_count"`
 	CommentCount    int64      `json:"comment_count"`
 	DurationSeconds int64      `json:"duration_seconds"`
+	Tags            string     `json:"tags"` // JSON array of tag strings, mirrored on sync
 	LastSyncedAt    *time.Time `json:"last_synced_at"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
@@ -33,6 +34,7 @@ type Playlist struct {
 	YTPlaylistID string    `gorm:"uniqueIndex" json:"yt_playlist_id"`
 	Title        string    `json:"title"`
 	Description  string    `json:"description"`
+	Privacy      string    `json:"privacy"`
 	ItemCount    int64     `json:"item_count"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -65,6 +67,8 @@ type Comment struct {
 	Text          string     `json:"text"`
 	IsFirst       bool       `json:"is_first"`
 	IsPinnedKnown bool       `json:"is_pinned_known"`
+	PinnedText    string     `json:"pinned_text"`
+	LikeCount     int64      `json:"like_count"`
 	PublishedAt   *time.Time `json:"published_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`

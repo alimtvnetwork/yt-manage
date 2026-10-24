@@ -33,6 +33,7 @@ type VideoRepository interface {
 	CountMatching(q VideoQuery) (int64, error)
 	DeleteByChannel(channelID uint) error
 	UpdateTitleDescription(id uint, title string, description string) error
+	UpdateTags(id uint, tags string) error
 	UpdateSchedule(id uint, publishAt *time.Time, visibility model.Visibility) error
 	UpdateStats(id uint, views int64, likes int64, comments int64) error
 }
@@ -47,7 +48,7 @@ func (r *videoRepository) UpsertByYTID(video *model.Video) error {
 		DoUpdates: clause.AssignmentColumns([]string{
 			"channel_id", "title", "description", "visibility", "is_short",
 			"published_at", "publish_at", "view_count", "like_count",
-			"comment_count", "duration_seconds", "last_synced_at", "updated_at",
+			"comment_count", "duration_seconds", "tags", "last_synced_at", "updated_at",
 		}),
 	}).Create(video).Error
 }
@@ -147,6 +148,10 @@ func (r *videoRepository) CountMatching(q VideoQuery) (int64, error) {
 // account removal instead.
 func (r *videoRepository) DeleteByChannel(channelID uint) error {
 	return r.db.Where("channel_id = ?", channelID).Delete(&model.Video{}).Error
+}
+
+func (r *videoRepository) UpdateTags(id uint, tags string) error {
+	return r.db.Model(&model.Video{}).Where("id = ?", id).Update("tags", tags).Error
 }
 
 func (r *videoRepository) UpdateTitleDescription(id uint, title string, description string) error {

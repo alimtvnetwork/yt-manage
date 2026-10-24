@@ -1087,6 +1087,108 @@ body.read-only [data-write] { opacity: 0.55; }
 .thumb-review-card { max-width: 640px; }
 .thumb-review-row { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
 
+/* Wave 6: comment centre — coverage, link checker, bulk post (items 126-130) */
+.cc-coverage { margin-bottom: 10px; }
+.cc-coverage:empty { display: none; }
+.cc-coverage-row {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 12px; margin: 6px 0; font-size: 14px;
+}
+.cc-coverage-row span:first-child { flex: 1; min-width: 220px; }
+.cc-link-row {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 8px 0; border-top: 1px solid var(--border); font-size: 14px;
+}
+.cc-link-row:first-of-type { border-top: none; }
+.cc-link-row a { overflow-wrap: anywhere; }
+.cc-row.cc-flash { background: var(--hl-bg); border-radius: 8px; }
+#cc-bulk-card label { display: block; margin: 8px 0; }
+#cc-bulk-card select, #cc-bulk-card textarea { width: 100%; }
+
+/* Wave 6: length views (item 139) */
+.length-count { color: inherit; opacity: 0.75; font-size: 12px; }
+
+/* Wave 6: playlist board, detail panels, orphans (items 131-138) */
+.pl-actions { align-items: center; margin-top: 10px; }
+.pl-privacy-edit { display: inline-flex; gap: 6px; align-items: center; }
+.pl-detail {
+  margin-top: 10px; border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px;
+}
+.pl-detail label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }
+.checklist-line { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: var(--fs-base); flex-wrap: wrap; }
+.checklist-line.is-ok .preflight-mark { color: var(--accent-2); }
+.checklist-line.is-fail .preflight-mark { color: var(--danger); }
+.board-controls { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.board-controls label { flex: 1 1 240px; color: var(--muted); font-size: 14px; }
+.board-controls select { display: block; width: 100%; margin-top: 4px; }
+.board-panes { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; align-items: start; }
+.board-pane {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  background: var(--panel-2); min-height: 90px;
+}
+.board-drop { border-style: dashed; text-align: center; }
+.board-drop.is-over { border-color: var(--accent); background: var(--accent-soft); }
+.board-drop-label { font-weight: 600; }
+.board-item {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 10px; margin: 5px 0;
+}
+.board-item-title { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
+.dup-row { padding: 7px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.dup-row:first-of-type { border-top: none; }
+.orphan-group { border-top: 1px solid var(--border); padding: 10px 0; }
+.orphan-group:first-of-type { border-top: none; }
+.orphan-head { margin-bottom: 8px; }
+
+/* Wave 6: insights (items 141-150) */
+.insight-meta { margin-top: 10px; font-size: 12.5px; }
+.bar-row { display: flex; gap: 10px; align-items: center; margin: 5px 0; font-size: 13.5px; }
+.bar-label { width: 86px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar-track { flex: 1; height: 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--accent); }
+.bar-value { width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.sparkline { vertical-align: middle; margin-left: 8px; }
+table.grid tbody tr.is-dropoff td { background: var(--warn-bg); }
+.performer-list { margin: 6px 0 12px 20px; padding: 0; }
+.performer-list li { padding: 4px 0; }
+.performer-title { display: block; overflow-wrap: anywhere; }
+.heat-wrap { overflow-x: auto; }
+.heat-grid {
+  display: grid; grid-template-columns: 44px repeat(24, minmax(22px, 1fr));
+  gap: 3px; min-width: 640px; align-items: center;
+}
+.heat-hour { color: var(--muted); font-size: 11px; text-align: center; }
+.heat-day { color: var(--muted); font-size: 12px; font-weight: 600; }
+.heat-cell {
+  background: rgba(79, 140, 255, var(--heat, 0));
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 11px; text-align: center; padding: 3px 0; min-height: 22px;
+  font-variant-numeric: tabular-nums;
+}
+.goal-row { border-top: 1px solid var(--border); padding: 10px 0; }
+.goal-row:first-of-type { border-top: none; }
+.goal-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.goal-del { margin-left: auto; }
+.goal-bar { height: 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin-bottom: 4px; }
+.goal-fill { height: 100%; background: var(--accent-2); }
+#goal-form label { display: block; margin: 8px 0; }
+#goal-form input, #goal-form select { width: 100%; }
+
+/* Wave 6: A/B results (items 143-144) */
+.ab-results {
+  margin-top: 10px; border: 1px dashed var(--accent); border-radius: 8px;
+  padding: 10px 12px; background: var(--accent-soft);
+}
+.ab-results label { display: block; margin: 8px 0; color: var(--muted); font-size: 14px; }
+.ab-results label input { display: block; width: 100%; margin-top: 4px; }
+.ab-results h4 { margin: 14px 0 4px; font-size: 14.5px; }
+
+@media (max-width: 860px) {
+  .board-panes { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 860px) {
   .cc-row { grid-template-columns: 1fr; }
 }
@@ -1112,3 +1214,8 @@ body.read-only [data-write] { opacity: 0.55; }
   /* Wave 4 surfaces likewise (items 70, 81) */
   .overlay-card, .selection-bar, .panel.is-active, .card { animation: none !important; transition: none !important; }
 }
+
+/* Tags manager (item 140) */
+.tag-row { padding: 8px 0; border-bottom: 1px solid var(--border, #ddd); }
+.tag-rename-box { margin-top: 8px; }
+.tag-rename-box input { min-width: 260px; }

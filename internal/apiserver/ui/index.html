@@ -30,6 +30,7 @@
       <button class="nav-item" data-section="commentcentre"><span class="nav-icon">❝</span><span class="nav-label">Comment Centre</span></button>
       <button class="nav-item" data-section="schedules"><span class="nav-icon">◷</span><span class="nav-label">Schedules</span><span class="badge" id="badge-schedules"></span></button>
       <button class="nav-item" data-section="playlists"><span class="nav-icon">☰</span><span class="nav-label">Playlists</span><span class="badge" id="badge-playlists"></span></button>
+      <button class="nav-item" data-section="insights"><span class="nav-icon">◔</span><span class="nav-label">Insights</span></button>
       <button class="nav-item" data-section="comments"><span class="nav-icon">✎</span><span class="nav-label">Comments</span><span class="badge" id="badge-comments"></span></button>
       <button class="nav-item" data-section="abtests"><span class="nav-icon">A/B</span><span class="nav-label">A/B Tests</span></button>
       <button class="nav-item" data-section="accounts"><span class="nav-icon">◉</span><span class="nav-label">Accounts</span><span class="badge" id="badge-accounts"></span></button>
@@ -204,6 +205,12 @@
           <button class="chip toggle" id="chip-shorts" aria-pressed="false">Shorts only</button>
           <button class="chip toggle" id="chip-has-comments" aria-pressed="false">Has comments</button>
         </div>
+        <div class="chips" id="length-chips" role="group" aria-label="Video length view">
+          <span class="bulk-label">Length:</span>
+          <button class="chip is-active" data-length="all">All <span class="length-count" id="length-count-all"></span></button>
+          <button class="chip" data-length="shorts">Shorts (≤60s) <span class="length-count" id="length-count-shorts"></span></button>
+          <button class="chip" data-length="long">Long-form (≥61s) <span class="length-count" id="length-count-long"></span></button>
+        </div>
         <div class="status-line" id="video-status"></div>
         <div class="bulkbar">
           <div class="bulk-main">
@@ -260,6 +267,16 @@
             </thead>
             <tbody id="video-rows"></tbody>
           </table>
+        </div>
+        <div class="card" id="tags-card">
+          <h3>Tags manager</h3>
+          <p class="muted-text">Every tag mirrored by sync on the chosen channel, with the number of videos carrying it. Rename updates the tag on YouTube for each video (about 50 quota units per video); if the new name already exists, the tags merge. Leave the new name empty to remove the tag. Tags appear here after a sync that fetched them.</p>
+          <div class="row">
+            <select id="tags-channel"><option value="">Choose a channel…</option></select>
+            <button id="tags-load-btn">Load tags</button>
+          </div>
+          <div class="status-line" id="tags-status"></div>
+          <div id="tags-list"></div>
         </div>
       </section>
 
@@ -390,8 +407,25 @@
       <section id="section-commentcentre" class="panel">
         <div class="toolbar">
           <button id="cc-load-btn" class="primary">Refresh comment centre</button>
+          <button id="cc-check-links-btn" data-write>Check comment links</button>
         </div>
         <div class="warn-box">Pinning a comment is a manual YouTube Studio step — the YouTube API has no pin endpoint. Post the first comment here, pin it in Studio, then mark it pinned so the checklist stays truthful.</div>
+        <div id="cc-coverage" class="cc-coverage"></div>
+        <div id="cc-link-results" class="card hidden"></div>
+        <div class="card" id="cc-bulk-card">
+          <h2>Bulk post first comments</h2>
+          <p class="muted-text">Post the templated first comment to every public video on a channel that does not have one yet — preview the exact change-set first, then post only the rows you keep ticked.</p>
+          <label>Channel
+            <select id="cc-bulk-channel"><option value="">Choose a channel…</option></select>
+          </label>
+          <label>Template <textarea id="cc-bulk-template" rows="3" placeholder="Tokens: {title} {episode} {series} {channel} — leave empty to use the channel default"></textarea></label>
+          <div class="row">
+            <button id="cc-bulk-preview-btn" class="primary">Preview change-set</button>
+            <button id="cc-bulk-post-btn" data-write disabled>Post selected</button>
+          </div>
+          <div class="status-line" id="cc-bulk-status"></div>
+          <div id="cc-bulk-results"></div>
+        </div>
         <div class="chips" id="cc-filter-chips">
           <button class="chip is-active" data-cc-filter="all">All</button>
           <button class="chip" data-cc-filter="posted">Posted</button>
@@ -427,8 +461,40 @@
         <div class="toolbar">
           <input id="playlist-channel" type="number" min="1" placeholder="Channel ID">
           <button id="playlist-load-btn" class="primary">Load playlists</button>
+          <button id="playlist-dup-btn">Check duplicates</button>
         </div>
         <div class="status-line" id="playlist-status"></div>
+        <div id="playlist-dup-results" class="card hidden"></div>
+        <div class="card" id="playlist-board-card">
+          <h2>Playlist board — move videos</h2>
+          <p class="muted-text">Pick a source playlist to list its videos, then move each one to a target playlist (the reliable click path), or drag a video onto the target pane. A move removes the video from the source on YouTube and adds it to the target — it is not a copy.</p>
+          <div class="board-controls">
+            <label>Source playlist
+              <select id="pl-move-source"><option value="">Load playlists first…</option></select>
+            </label>
+            <label>Target playlist
+              <select id="pl-move-target"><option value="">Load playlists first…</option></select>
+            </label>
+          </div>
+          <div class="board-panes">
+            <div class="board-pane" id="pl-move-items"><p class="muted-text">Choose a source playlist to list its videos here.</p></div>
+            <div class="board-pane board-drop" id="pl-move-drop">
+              <p class="muted-text">Drop a video here to move it into the target playlist.</p>
+              <p id="pl-move-drop-label" class="board-drop-label"></p>
+            </div>
+          </div>
+          <div class="status-line" id="pl-move-status"></div>
+        </div>
+        <div class="card" id="orphans-card">
+          <h2>Orphan videos</h2>
+          <p class="muted-text">Public videos that are in no playlist, grouped by likely series.</p>
+          <div class="row">
+            <select id="orphan-channel"><option value="">Choose a channel…</option></select>
+            <button id="orphans-load-btn" class="primary">Find orphans</button>
+          </div>
+          <div class="status-line" id="orphans-status"></div>
+          <div id="orphans-list"></div>
+        </div>
         <div id="playlist-list"></div>
         <form id="playlist-create-form" class="card">
           <h2>Create playlist</h2>
@@ -445,6 +511,89 @@
           <button type="submit" class="primary" data-write>Create</button>
           <div class="status-line" id="playlist-create-status"></div>
         </form>
+      </section>
+
+      <!-- INSIGHTS -->
+      <section id="section-insights" class="panel">
+        <div class="toolbar">
+          <label class="scope-picker">Channel
+            <select id="insights-channel"><option value="">Choose a channel…</option></select>
+          </label>
+          <button id="insights-load-btn" class="primary">Refresh insights</button>
+        </div>
+        <p class="muted-text">Everything here is computed from the local mirror — no live YouTube API call. Every panel states its source and window underneath it.</p>
+        <div class="status-line" id="insights-status"></div>
+
+        <div class="card" id="insights-dashboard-card">
+          <h2>Channel dashboard</h2>
+          <div id="insights-dashboard"><p class="muted-text">Loading…</p></div>
+        </div>
+
+        <div class="card" id="insights-scorecards-card">
+          <div class="card-head">
+            <h2>Series scorecards</h2>
+            <a class="btn-link" id="insights-export-scorecards" href="#" download>Export scorecards CSV</a>
+          </div>
+          <div id="insights-scorecards"><p class="muted-text">Loading…</p></div>
+        </div>
+
+        <div class="card" id="insights-performers-card">
+          <div class="card-head">
+            <h2>Best &amp; worst performers</h2>
+            <span class="row">
+              <button id="performers-by-views" class="chip is-active">By views</button>
+              <button id="performers-by-comments" class="chip">By comments</button>
+              <a class="btn-link" id="insights-export-performers" href="#" download>Export performers CSV</a>
+            </span>
+          </div>
+          <div id="insights-performers"><p class="muted-text">Loading…</p></div>
+        </div>
+
+        <div class="card" id="insights-heatmap-card">
+          <div class="card-head">
+            <h2>Publish-time heatmap</h2>
+            <label class="scope-picker">Window
+              <select id="heatmap-window">
+                <option value="90">Last 90 days</option>
+                <option value="365" selected>Last 365 days</option>
+              </select>
+            </label>
+          </div>
+          <div id="insights-heatmap"><p class="muted-text">Loading…</p></div>
+        </div>
+
+        <div class="card" id="insights-growth-card">
+          <div class="card-head">
+            <h2>Growth snapshots</h2>
+            <label class="scope-picker">Account
+              <select id="insights-account"><option value="">Choose an account…</option></select>
+            </label>
+          </div>
+          <div id="insights-growth"><p class="muted-text">Pick an account to see its snapshots.</p></div>
+        </div>
+
+        <div class="card" id="insights-goals-card">
+          <h2>Goals</h2>
+          <div id="goals-list"><p class="muted-text">Loading…</p></div>
+          <form id="goal-form">
+            <h3>Add a goal</h3>
+            <label>Goal <input id="goal-text" type="text" placeholder="e.g. All series scheduled through December"></label>
+            <label>Type
+              <select id="goal-type">
+                <option value="count">Video count</option>
+                <option value="coverage">First-comment coverage (%)</option>
+                <option value="scheduled-through">Scheduled through a date</option>
+              </select>
+            </label>
+            <label>Channel
+              <select id="goal-channel"><option value="">Choose a channel…</option></select>
+            </label>
+            <label>Target (count or %) <input id="goal-target" type="number" min="0" step="1" placeholder="e.g. 100"></label>
+            <label>Target date (scheduled-through goals) <input id="goal-date" type="date"></label>
+            <button type="submit" class="primary" data-write>Add goal</button>
+            <div class="status-line" id="goal-status"></div>
+          </form>
+        </div>
       </section>
 
       <!-- COMMENTS -->
@@ -554,6 +703,8 @@
             <label>Rename template <input id="cd-rename-template" type="text" placeholder="{title} #{n}"></label>
             <label>Default cadence (days) <input id="cd-cadence" type="number" min="0" step="1" placeholder="0 = none"></label>
             <label>First-comment template <textarea id="cd-comment-template" rows="3" placeholder="Tokens: {title} {episode} {series} {channel}"></textarea></label>
+            <label>Playlist title template <input id="cd-playlist-title-template" type="text" placeholder="Tokens: {series} {channel} {count}"></label>
+            <label>Playlist description template <textarea id="cd-playlist-desc-template" rows="2" placeholder="Tokens: {series} {channel} {count}"></textarea></label>
             <fieldset class="rule-group">
               <legend>Post-publish pipeline</legend>
               <label class="check"><input id="cd-pipeline-comment" type="checkbox"> Post the first comment when a scheduled video goes live</label>
@@ -666,6 +817,8 @@
   <h3>Rename history</h3>
   <button id="drawer-undo-btn" class="hidden" data-write>Undo last rename</button>
   <div id="drawer-history" class="history-list"><p class="muted-text">No recorded renames yet</p></div>
+  <h3>Top comments</h3>
+  <div id="drawer-top-comments"><p class="muted-text">Loading comments…</p></div>
 </aside>
 
 <div id="progress-centre" class="progress-centre hidden"></div>

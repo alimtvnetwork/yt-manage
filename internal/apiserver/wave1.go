@@ -381,6 +381,7 @@ type commentDTO struct {
 	VideoTitle    string `json:"videoTitle"`
 	YTVideoID     string `json:"ytVideoId"`
 	Text          string `json:"text"`
+	PinnedText    string `json:"pinnedText,omitempty"`
 	IsPinnedKnown bool   `json:"isPinnedKnown"`
 	PublishedAt   string `json:"publishedAt"`
 }
@@ -397,6 +398,7 @@ func (s *Server) handleListComments(w http.ResponseWriter, r *http.Request) {
 	for _, comment := range comments {
 		dto := commentDTO{
 			ID: comment.ID, VideoID: comment.VideoID, Text: comment.Text,
+			PinnedText:    comment.PinnedText,
 			IsPinnedKnown: comment.IsPinnedKnown, PublishedAt: formatTimePtr(comment.PublishedAt),
 		}
 		if video, err := s.store.Videos.GetByID(comment.VideoID); err == nil {

@@ -77,6 +77,7 @@ type playlistDTO struct {
 	YTPlaylistID string `json:"ytPlaylistId"`
 	Title        string `json:"title"`
 	Description  string `json:"description"`
+	Privacy      string `json:"privacy"`
 	ItemCount    int64  `json:"itemCount"`
 	CreatedAt    string `json:"createdAt"`
 	UpdatedAt    string `json:"updatedAt"`
@@ -142,7 +143,7 @@ func toChannelDTO(channel model.Channel) channelDTO {
 func toPlaylistDTO(playlist model.Playlist) playlistDTO {
 	return playlistDTO{
 		ID: playlist.ID, ChannelID: playlist.ChannelID, YTPlaylistID: playlist.YTPlaylistID,
-		Title: playlist.Title, Description: playlist.Description, ItemCount: playlist.ItemCount,
+		Title: playlist.Title, Description: playlist.Description, Privacy: playlist.Privacy, ItemCount: playlist.ItemCount,
 		CreatedAt: formatTime(playlist.CreatedAt), UpdatedAt: formatTime(playlist.UpdatedAt),
 	}
 }

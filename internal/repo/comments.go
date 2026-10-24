@@ -12,8 +12,8 @@ type CommentRepository interface {
 	UpsertByYTID(comment *model.Comment) error
 	GetByYTID(ytCommentID string) (*model.Comment, error)
 	GetByID(id uint) (*model.Comment, error)
-	GetFirstByVideo(videoID uint) (*model.Comment, error)
 	ListByVideo(videoID uint) ([]model.Comment, error)
+	GetFirstByVideo(videoID uint) (*model.Comment, error)
 	ListFirstComments(limit int) ([]model.Comment, error)
 	CountFirstComments() (int64, error)
 	UpdateText(id uint, text string) error
@@ -28,7 +28,7 @@ func (r *commentRepository) UpsertByYTID(comment *model.Comment) error {
 	return r.db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "yt_comment_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"video_id", "author", "text", "is_first", "is_pinned_known", "published_at", "updated_at",
+			"video_id", "author", "text", "is_first", "like_count", "published_at", "updated_at",
 		}),
 	}).Create(comment).Error
 }
@@ -59,7 +59,7 @@ func (r *commentRepository) GetFirstByVideo(videoID uint) (*model.Comment, error
 
 func (r *commentRepository) ListByVideo(videoID uint) ([]model.Comment, error) {
 	var comments []model.Comment
-	if err := r.db.Where("video_id = ?", videoID).Order("id ASC").Find(&comments).Error; err != nil {
+	if err := r.db.Where("video_id = ?", videoID).Order("like_count DESC, id ASC").Find(&comments).Error; err != nil {
 		return nil, err
 	}
 	return comments, nil
@@ -92,5 +92,15 @@ func (r *commentRepository) UpdateText(id uint, text string) error {
 }
 
 func (r *commentRepository) SetPinned(id uint, pinned bool) error {
-	return r.db.Model(&model.Comment{}).Where("id = ?", id).Update("is_pinned_known", pinned).Error
+	updates := map[string]interface{}{"is_pinned_known": pinned}
+	if pinned {
+		// Snapshot the text being pinned (spec 29, item 129) so
+		// coverage reporting can compare what is live in Studio
+		// against what yt-manage last recorded.
+		var comment model.Comment
+		if err := r.db.First(&comment, id).Error; err == nil {
+			updates["pinned_text"] = comment.Text
+		}
+	}
+	return r.db.Model(&model.Comment{}).Where("id = ?", id).Updates(updates).Error
 }

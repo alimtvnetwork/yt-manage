@@ -212,6 +212,10 @@ type channelDefaults struct {
 	PipelineEmail      bool     `json:"pipelineEmail"`
 	PipelinePlaylistID uint     `json:"pipelinePlaylistId"`
 	WatchSeries        []string `json:"watchSeries"`
+	// Playlist templates (item 135): rendered when a playlist
+	// is created from a series.
+	PlaylistTitleTemplate       string `json:"playlistTitleTemplate"`
+	PlaylistDescriptionTemplate string `json:"playlistDescriptionTemplate"`
 }
 
 func defaultsKey(channelID uint) string {
@@ -286,7 +290,8 @@ func (s *Server) handleExportWorkflow(w http.ResponseWriter, r *http.Request) {
 	for _, channel := range channels {
 		defaults := s.loadChannelDefaults(channel.ID)
 		if defaults.RenameTemplate != "" || defaults.CadenceDays != 0 || defaults.CommentTemplate != "" ||
-			defaults.PipelineComment || defaults.PipelineEmail || defaults.PipelinePlaylistID != 0 || len(defaults.WatchSeries) > 0 {
+			defaults.PipelineComment || defaults.PipelineEmail || defaults.PipelinePlaylistID != 0 || len(defaults.WatchSeries) > 0 ||
+			defaults.PlaylistTitleTemplate != "" || defaults.PlaylistDescriptionTemplate != "" {
 			bundle.ChannelDefaults[strconv.FormatUint(uint64(channel.ID), 10)] = defaults
 		}
 	}
@@ -601,6 +606,7 @@ func renderCommentTemplate(template string, video model.Video, channelTitle stri
 func toCommentDTO(comment model.Comment) commentDTO {
 	dto := commentDTO{
 		ID: comment.ID, VideoID: comment.VideoID, Text: comment.Text,
+		PinnedText:    comment.PinnedText,
 		IsPinnedKnown: comment.IsPinnedKnown, PublishedAt: formatTimePtr(comment.PublishedAt),
 	}
 	return dto

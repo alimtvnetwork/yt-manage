@@ -207,6 +207,41 @@ func reportAnomalies(store *repo.Store, accountID uint, channelID uint) {
 	if data, err := json.Marshal(current); err == nil {
 		_ = store.Settings.Set(key, string(data))
 	}
+	appendGrowthSnapshot(store, accountID, videos)
+}
+
+// growthSnapshot is one point-in-time channel total (item 147).
+type growthSnapshot struct {
+	At        string `json:"at"`
+	Videos    int    `json:"videos"`
+	Scheduled int    `json:"scheduled"`
+	Views     int64  `json:"views"`
+	Comments  int64  `json:"comments"`
+}
+
+// appendGrowthSnapshot records the channel's current totals in
+// the per-account growth history (capped at the newest 60).
+func appendGrowthSnapshot(store *repo.Store, accountID uint, videos []model.Video) {
+	snapshot := growthSnapshot{At: time.Now().Format(time.RFC3339), Videos: len(videos)}
+	for _, video := range videos {
+		if video.Visibility == model.VisibilityScheduled {
+			snapshot.Scheduled++
+		}
+		snapshot.Views += video.ViewCount
+		snapshot.Comments += video.CommentCount
+	}
+	key := fmt.Sprintf("growthsnap:%d", accountID)
+	history := []growthSnapshot{}
+	if raw, found, err := store.Settings.Get(key); err == nil && found {
+		_ = json.Unmarshal([]byte(raw), &history)
+	}
+	history = append(history, snapshot)
+	if len(history) > 60 {
+		history = history[len(history)-60:]
+	}
+	if data, err := json.Marshal(history); err == nil {
+		_ = store.Settings.Set(key, string(data))
+	}
 }
 
 // maxCommentVideosPerSync caps the comment mirroring of one run:
@@ -247,7 +282,7 @@ func syncComments(ctx context.Context, svc *youtube.Service, store *repo.Store, 
 			comment := &model.Comment{
 				VideoID: video.ID, YTCommentID: top.Id,
 				Author: snippet.AuthorDisplayName, Text: snippet.TextOriginal,
-				IsFirst: isFirst, PublishedAt: &published,
+				IsFirst: isFirst, PublishedAt: &published, LikeCount: int64(snippet.LikeCount),
 			}
 			if upsertErr := store.Comments.UpsertByYTID(comment); upsertErr != nil {
 				return comments, videosFetched, upsertErr
@@ -367,6 +402,11 @@ func videoModel(localChannelID uint, video *youtube.Video, syncedAt time.Time) (
 	if video.Snippet != nil {
 		mapped.Title = video.Snippet.Title
 		mapped.Description = video.Snippet.Description
+		if len(video.Snippet.Tags) > 0 {
+			if tagData, tagErr := json.Marshal(video.Snippet.Tags); tagErr == nil {
+				mapped.Tags = string(tagData)
+			}
+		}
 		if video.Snippet.PublishedAt != "" {
 			publishedAt, err := time.Parse(time.RFC3339, video.Snippet.PublishedAt)
 			if err != nil {
@@ -451,7 +491,7 @@ func parseDurationSeconds(duration string) int64 {
 func syncPlaylists(ctx context.Context, svc *youtube.Service, store *repo.Store, localChannelID uint) (skipped int, count int, err error) {
 	pageToken := ""
 	for {
-		call := svc.Playlists.List([]string{"snippet", "contentDetails"}).Mine(true).MaxResults(50)
+		call := svc.Playlists.List([]string{"snippet", "contentDetails", "status"}).Mine(true).MaxResults(50)
 		if pageToken != "" {
 			call = call.PageToken(pageToken)
 		}
@@ -483,6 +523,9 @@ func syncPlaylist(ctx context.Context, svc *youtube.Service, store *repo.Store, 
 	if playlist.Snippet != nil {
 		mapped.Title = playlist.Snippet.Title
 		mapped.Description = playlist.Snippet.Description
+	}
+	if playlist.Status != nil {
+		mapped.Privacy = playlist.Status.PrivacyStatus
 	}
 	if playlist.ContentDetails != nil {
 		mapped.ItemCount = playlist.ContentDetails.ItemCount

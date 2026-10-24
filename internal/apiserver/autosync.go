@@ -59,6 +59,7 @@ func (s *Server) autoTick(ctx context.Context) {
 	s.flushHeldWebhooks(cfg)
 	s.runDueAutoSyncs(ctx, cfg)
 	s.runPipelines(ctx, cfg)
+	s.runABTestSchedules(ctx)
 }
 
 // bumpHeld adds to the quiet-hours held counter.

@@ -42,7 +42,7 @@ preview/undo/settings).
 - [x] Wave 5 (Subtask 05) — Items 101–125: pattern panel, suggestion
       inbox, rules engine, approval queue, post-publish pipeline,
       comment centre, pin checklist.
-- [ ] Wave 6 (Subtask 06) — Items 126–150: comment coverage, playlist
+- [x] Wave 6 (Subtask 06) — Items 126–150: comment coverage, playlist
       board + gap/duplicate finders, tags manager, channel dashboard,
       series scorecards, A/B results view, publish heatmap.
 - [ ] Wave 7 (Subtask 07) — Items 151–175: all-accounts overview,
