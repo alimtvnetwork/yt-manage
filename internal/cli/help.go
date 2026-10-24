@@ -33,5 +33,13 @@ Commands:
 
 Run "yt-manage <command> --help" for a command's subcommands.
 Data lives in ~/.yt-manage (override with YT_MANAGE_HOME).
+
+Getting started (the same 4 steps the browser UI wizard walks through):
+  1. yt-manage account add   Connect a YouTube account (OAuth consent;
+                             tokens expire after 7 days while your Google
+                             consent screen is in Testing mode - publish it)
+  2. yt-manage sync run      Mirror your channels into the local database
+  3. yt-manage search <q>    Search the local mirror at no API quota cost
+  4. yt-manage serve         Open the browser UI (wizard, checklist, search)
 `)
 }

@@ -14,6 +14,7 @@ type PlaylistRepository interface {
 	ListByChannel(channelID uint) ([]model.Playlist, error)
 	ReplaceItems(playlistID uint, items []model.PlaylistItem) error
 	ListItems(playlistID uint) ([]model.PlaylistItem, error)
+	DeleteByChannel(channelID uint) error
 }
 
 type playlistRepository struct {
@@ -67,4 +68,21 @@ func (r *playlistRepository) ListItems(playlistID uint) ([]model.PlaylistItem, e
 		return nil, err
 	}
 	return items, nil
+}
+
+// DeleteByChannel removes a channel's playlists and their items. It is
+// used to clear the demo dataset.
+func (r *playlistRepository) DeleteByChannel(channelID uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var playlists []model.Playlist
+		if err := tx.Where("channel_id = ?", channelID).Find(&playlists).Error; err != nil {
+			return err
+		}
+		for _, playlist := range playlists {
+			if err := tx.Where("playlist_id = ?", playlist.ID).Delete(&model.PlaylistItem{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("channel_id = ?", channelID).Delete(&model.Playlist{}).Error
+	})
 }

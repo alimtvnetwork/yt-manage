@@ -19,7 +19,7 @@ spec; this plan is the execution tracker.
 
 Spec file: 02-spec/21-app/29-user-experience-200-features/02-first-100-features.md
 
-- [ ] Wave 1 (Subtask 01) — Items 1–25: first-run wizard, OAuth status,
+- [x] Wave 1 (Subtask 01) — Items 1–25: first-run wizard, OAuth status,
       demo channel, first-sync progress, sidebar navigation, scope
       switcher, deep links, instant search, filter chips.
 - [ ] Wave 2 (Subtask 02) — Items 26–50: saved/recent searches,

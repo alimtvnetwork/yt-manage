@@ -12,6 +12,8 @@ type CommentRepository interface {
 	UpsertByYTID(comment *model.Comment) error
 	GetFirstByVideo(videoID uint) (*model.Comment, error)
 	ListByVideo(videoID uint) ([]model.Comment, error)
+	ListFirstComments(limit int) ([]model.Comment, error)
+	CountFirstComments() (int64, error)
 	UpdateText(id uint, text string) error
 }
 
@@ -42,6 +44,28 @@ func (r *commentRepository) ListByVideo(videoID uint) ([]model.Comment, error) {
 		return nil, err
 	}
 	return comments, nil
+}
+
+// ListFirstComments returns the managed first comments, newest first.
+func (r *commentRepository) ListFirstComments(limit int) ([]model.Comment, error) {
+	var comments []model.Comment
+	query := r.db.Where("is_first = ?", true).Order("id DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&comments).Error; err != nil {
+		return nil, err
+	}
+	return comments, nil
+}
+
+// CountFirstComments returns how many managed first comments exist.
+func (r *commentRepository) CountFirstComments() (int64, error) {
+	var count int64
+	if err := r.db.Model(&model.Comment{}).Where("is_first = ?", true).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (r *commentRepository) UpdateText(id uint, text string) error {

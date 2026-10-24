@@ -22,6 +22,9 @@ type Query struct {
 	Visibility      string
 	PublishedAfter  *time.Time
 	PublishedBefore *time.Time
+	Sort            string
+	OnlyShorts      bool
+	HasComments     bool
 	Limit           int
 	Offset          int
 }
@@ -43,6 +46,9 @@ func Search(store *repo.Store, q Query) ([]model.Video, error) {
 		Visibility:      q.Visibility,
 		PublishedAfter:  q.PublishedAfter,
 		PublishedBefore: q.PublishedBefore,
+		Sort:            q.Sort,
+		OnlyShorts:      q.OnlyShorts,
+		HasComments:     q.HasComments,
 		Limit:           limit,
 		Offset:          q.Offset,
 	})

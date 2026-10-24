@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/alimtvnetwork/yt-manage/internal/batch"
+	"github.com/alimtvnetwork/yt-manage/internal/repo"
 	"github.com/alimtvnetwork/yt-manage/internal/searchx"
 )
 
@@ -31,9 +32,22 @@ func (s *Server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	videos, err := searchx.Search(s.store, searchx.Query{
+	query := searchx.Query{
 		Text: r.URL.Query().Get("q"), ChannelID: channelID,
-		Visibility: r.URL.Query().Get("visibility"), Limit: limit, Offset: offset,
+		Visibility:  r.URL.Query().Get("visibility"),
+		Sort:        r.URL.Query().Get("sort"),
+		OnlyShorts:  r.URL.Query().Get("shorts") == "1",
+		HasComments: r.URL.Query().Get("hasComments") == "1",
+		Limit:       limit, Offset: offset,
+	}
+	videos, err := searchx.Search(s.store, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	total, err := s.store.Videos.CountMatching(repo.VideoQuery{
+		Text: query.Text, ChannelID: query.ChannelID, Visibility: query.Visibility,
+		Sort: query.Sort, OnlyShorts: query.OnlyShorts, HasComments: query.HasComments,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -43,7 +57,7 @@ func (s *Server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 	for _, video := range videos {
 		dtos = append(dtos, toVideoDTO(video))
 	}
-	writeOK(w, videosResponse{Videos: dtos, Count: len(dtos)})
+	writeOK(w, videosResponse{Videos: dtos, Count: int(total)})
 }
 
 // handleGetVideo serves GET /api/videos/{id}.

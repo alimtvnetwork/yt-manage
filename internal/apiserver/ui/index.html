@@ -7,144 +7,334 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header class="topbar">
-  <h1>yt-manage</h1>
-  <nav class="tabs" id="tabs">
-    <button class="tab is-active" data-section="videos">Videos</button>
-    <button class="tab" data-section="episodes">Episodes</button>
-    <button class="tab" data-section="playlists">Playlists</button>
-    <button class="tab" data-section="abtests">A/B Tests</button>
-    <button class="tab" data-section="accounts">Accounts</button>
-  </nav>
-</header>
+<div class="layout">
 
-<main>
-  <section id="section-videos" class="panel is-active">
-    <div class="toolbar">
-      <input id="video-q" type="search" placeholder="Search titles and descriptions">
-      <input id="video-channel" type="number" min="1" placeholder="Channel ID">
-      <select id="video-visibility">
-        <option value="">Any visibility</option>
-        <option value="public">public</option>
-        <option value="unlisted">unlisted</option>
-        <option value="private">private</option>
-        <option value="scheduled">scheduled</option>
-        <option value="draft">draft</option>
-      </select>
-      <button id="video-search-btn" class="primary">Search</button>
-      <input id="pattern-finder" type="text" placeholder="Pattern finder (regex highlight)">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">yt-manage</div>
+    <nav class="side-nav" id="side-nav">
+      <button class="nav-item" data-section="home"><span class="nav-icon">⌂</span><span class="nav-label">Home</span></button>
+      <button class="nav-item" data-section="videos"><span class="nav-icon">▶</span><span class="nav-label">Videos</span><span class="badge" id="badge-videos"></span></button>
+      <button class="nav-item" data-section="episodes"><span class="nav-icon">▦</span><span class="nav-label">Episodes</span><span class="badge" id="badge-episodes"></span></button>
+      <button class="nav-item" data-section="schedules"><span class="nav-icon">◷</span><span class="nav-label">Schedules</span><span class="badge" id="badge-schedules"></span></button>
+      <button class="nav-item" data-section="playlists"><span class="nav-icon">☰</span><span class="nav-label">Playlists</span><span class="badge" id="badge-playlists"></span></button>
+      <button class="nav-item" data-section="comments"><span class="nav-icon">✎</span><span class="nav-label">Comments</span><span class="badge" id="badge-comments"></span></button>
+      <button class="nav-item" data-section="abtests"><span class="nav-icon">A/B</span><span class="nav-label">A/B Tests</span></button>
+      <button class="nav-item" data-section="accounts"><span class="nav-icon">◉</span><span class="nav-label">Accounts</span><span class="badge" id="badge-accounts"></span></button>
+      <button class="nav-item" data-section="settings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
+    </nav>
+    <div class="saved-searches" id="saved-searches">
+      <div class="side-heading">Saved searches</div>
+      <div id="saved-search-list"></div>
     </div>
-    <div class="status-line" id="video-status"></div>
-    <div class="bulkbar">
-      <input id="bulk-template" type="text" placeholder="Template, e.g. {title} #{n}">
-      <input id="bulk-regex" type="text" placeholder="Regex">
-      <input id="bulk-replacement" type="text" placeholder="Replacement">
-      <input id="bulk-desc-template" type="text" placeholder="Description template">
-      <input id="bulk-start" type="number" value="1" class="narrow" title="Start index">
-      <button id="bulk-plan-btn">Plan bulk edit</button>
-    </div>
-    <div id="bulk-plan" class="plan-box hidden">
-      <pre id="bulk-summary"></pre>
-      <table class="grid">
-        <thead><tr><th>YT ID</th><th>Old title</th><th>New title</th><th>Description</th></tr></thead>
-        <tbody id="bulk-changes"></tbody>
-      </table>
-      <button id="bulk-apply-btn" class="primary">Apply plan</button>
-    </div>
-    <table class="grid" id="video-table">
-      <thead>
-        <tr>
-          <th><input type="checkbox" id="video-select-all"></th>
-          <th>ID</th><th>Title</th><th>Visibility</th><th>Views</th><th>Published</th>
-        </tr>
-      </thead>
-      <tbody id="video-rows"></tbody>
-    </table>
-    <form id="video-edit-form" class="card hidden">
-      <h2>Edit video <span id="edit-video-id"></span></h2>
-      <label>Title <input id="edit-title" type="text"></label>
-      <label>Description <textarea id="edit-description" rows="4"></textarea></label>
-      <div class="row">
-        <button type="submit" class="primary">Save via YouTube API</button>
-        <button type="button" id="edit-cancel">Cancel</button>
+    <button id="sidebar-collapse" class="collapse-btn" title="Collapse sidebar">«</button>
+  </aside>
+
+  <div class="content">
+    <header class="topbar">
+      <div class="crumbs">
+        <span class="crumb-root">yt-manage</span>
+        <span class="crumb-sep">/</span>
+        <span id="page-title">Home</span>
+        <span id="scope-label" class="scope-label"></span>
       </div>
-      <div class="status-line" id="edit-status"></div>
-    </form>
-  </section>
+      <div class="header-controls">
+        <label class="scope-picker">Channel
+          <select id="scope-channel"><option value="">All channels</option></select>
+        </label>
+        <button id="density-toggle" title="Toggle row density">Density: comfortable</button>
+      </div>
+    </header>
 
-  <section id="section-episodes" class="panel">
-    <div class="toolbar">
-      <input id="episode-channel" type="number" min="1" placeholder="Channel ID">
-      <button id="episode-load-btn" class="primary">Load episodes</button>
-    </div>
-    <div class="status-line" id="episode-status"></div>
-    <div id="episode-list"></div>
-    <form id="schedule-form" class="card hidden">
-      <h2>Schedule episode <span id="schedule-episode-id"></span></h2>
-      <label>Cadence days <input id="schedule-cadence" type="number" min="1" value="7"></label>
-      <label>Starts at <input id="schedule-starts" type="datetime-local"></label>
-      <label class="check"><input id="schedule-public" type="checkbox"> Include public videos</label>
-      <button type="submit" class="primary">Apply schedule</button>
-      <div class="status-line" id="schedule-status"></div>
-      <ul id="schedule-result"></ul>
-    </form>
-  </section>
+    <main>
+      <!-- HOME -->
+      <section id="section-home" class="panel">
+        <div id="home-stats" class="stat-grid"></div>
 
-  <section id="section-playlists" class="panel">
-    <div class="toolbar">
-      <input id="playlist-channel" type="number" min="1" placeholder="Channel ID">
-      <button id="playlist-load-btn" class="primary">Load playlists</button>
-    </div>
-    <div class="status-line" id="playlist-status"></div>
-    <div id="playlist-list"></div>
-    <form id="playlist-create-form" class="card">
-      <h2>Create playlist</h2>
-      <label>Channel ID <input id="playlist-new-channel" type="number" min="1"></label>
-      <label>Title <input id="playlist-new-title" type="text"></label>
-      <label>Description <textarea id="playlist-new-description" rows="3"></textarea></label>
-      <label>Privacy
-        <select id="playlist-new-privacy">
-          <option value="private">private</option>
-          <option value="unlisted">unlisted</option>
-          <option value="public">public</option>
-        </select>
-      </label>
-      <button type="submit" class="primary">Create</button>
-      <div class="status-line" id="playlist-create-status"></div>
-    </form>
-  </section>
+        <div class="card hidden" id="wizard-card">
+          <h2>Set up yt-manage</h2>
+          <div class="wizard-step" data-step="1">
+            <h3>1. Connect an account</h3>
+            <p id="wizard-oauth-state" class="muted-text"></p>
+            <p>Run this in a terminal — it opens the Google consent flow in your browser:</p>
+            <div class="codeblock-row">
+              <pre class="codeblock"><code>yt-manage account add</code></pre>
+              <button id="wizard-copy-cmd">Copy</button>
+            </div>
+            <div class="warn-box">
+              If your Google Cloud consent screen is still in <strong>Testing mode</strong>,
+              Google expires your tokens after <strong>7 days</strong> and your accounts will
+              silently disconnect. Publish the consent screen to keep accounts connected:
+              <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">Google Cloud Console → OAuth consent screen</a>.
+            </div>
+            <button class="wiz-skip" data-wiz-skip="1">Skip this step</button>
+          </div>
+          <div class="wizard-step" data-step="2">
+            <h3>2. First sync</h3>
+            <p>Mirror your channels, videos and playlists into the local database. Search then costs no YouTube API quota.</p>
+            <button id="wizard-sync-btn" class="primary">Run first sync</button>
+            <div id="wizard-sync-progress" class="status-line"></div>
+            <div id="wizard-sync-result"></div>
+            <button class="wiz-skip" data-wiz-skip="2">Skip this step</button>
+          </div>
+          <div class="wizard-step" data-step="3">
+            <h3>3. Pick a channel</h3>
+            <p>Choose the channel you work with most. It becomes the scope for Videos, Episodes and Playlists (you can change it any time in the header).</p>
+            <select id="wizard-channel"><option value="">All channels</option></select>
+            <button class="wiz-skip" data-wiz-skip="3">Skip this step</button>
+          </div>
+          <div class="wizard-step" data-step="4">
+            <h3>4. Done</h3>
+            <p id="wizard-done-text">You are set up. Start with your videos — search is instant and costs no quota.</p>
+            <button id="wizard-finish-btn" class="primary">Open Videos</button>
+            <button class="wiz-skip" data-wiz-skip="4">Skip this step</button>
+          </div>
+        </div>
 
-  <section id="section-abtests" class="panel">
-    <div class="toolbar">
-      <input id="ab-video-id" type="number" min="1" placeholder="Video ID (blank = active tests)">
-      <button id="ab-load-btn" class="primary">Load tests</button>
-    </div>
-    <div class="status-line" id="ab-status"></div>
-    <div id="ab-list"></div>
-    <form id="ab-create-form" class="card">
-      <h2>Create A/B test</h2>
-      <label>Video ID <input id="ab-new-video" type="number" min="1"></label>
-      <label>Variant A <input id="ab-new-a" type="text"></label>
-      <label>Variant B <input id="ab-new-b" type="text"></label>
-      <button type="submit" class="primary">Create test</button>
-      <div class="status-line" id="ab-create-status"></div>
-    </form>
-  </section>
+        <div class="card hidden" id="checklist-card">
+          <div class="card-head">
+            <h2>Setup checklist</h2>
+            <button id="checklist-dismiss">Dismiss</button>
+          </div>
+          <ul id="checklist-list" class="checklist"></ul>
+        </div>
 
-  <section id="section-accounts" class="panel">
-    <div class="toolbar">
-      <button id="accounts-load-btn" class="primary">Load accounts</button>
-      <button id="sync-all-btn">Sync all</button>
-      <span id="sync-spinner" class="spinner hidden"></span>
+        <div class="card hidden" id="whatnext-card">
+          <h2>What next</h2>
+          <div id="whatnext-list"></div>
+        </div>
+
+        <div class="card" id="demo-card">
+          <h2>Demo channel <span class="pill demo-pill">DEMO</span></h2>
+          <p>Demo data is sample content stored locally so you can explore search, episodes and scheduling before connecting a real account. It is clearly separate from your real channels and can be removed at any time.</p>
+          <div class="row">
+            <button id="demo-seed-btn" class="primary">Load demo channel</button>
+            <button id="demo-clear-btn">Remove demo data</button>
+          </div>
+          <div class="status-line" id="demo-status"></div>
+        </div>
+
+        <div class="card" id="detected-card">
+          <h2>Detected on this machine</h2>
+          <dl class="kv">
+            <dt>OAuth client</dt><dd id="detected-oauth">…</dd>
+            <dt>Data directory</dt><dd id="detected-datadir">…</dd>
+          </dl>
+          <p class="muted-text">These were detected automatically — if your OAuth client is listed here, yt-manage uses it as-is and will not ask for it again.</p>
+        </div>
+      </section>
+
+      <!-- VIDEOS -->
+      <section id="section-videos" class="panel">
+        <div class="toolbar">
+          <input id="video-q" type="search" placeholder="Search titles and descriptions">
+          <input id="video-channel" type="number" min="1" placeholder="Channel ID">
+          <select id="video-sort" title="Sort results">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="title">Title A–Z</option>
+            <option value="views">Most views</option>
+          </select>
+          <button id="video-search-btn" class="primary">Search</button>
+          <button id="video-save-search-btn">Save search</button>
+          <input id="pattern-finder" type="text" placeholder="Pattern finder (regex highlight)">
+        </div>
+        <div class="chips" id="visibility-chips">
+          <button class="chip is-active" data-vis="">All</button>
+          <button class="chip" data-vis="public">Public</button>
+          <button class="chip" data-vis="unlisted">Unlisted</button>
+          <button class="chip" data-vis="private">Private</button>
+          <button class="chip" data-vis="scheduled">Scheduled</button>
+          <button class="chip" data-vis="draft">Draft</button>
+          <span class="chip-sep"></span>
+          <button class="chip toggle" id="chip-shorts" aria-pressed="false">Shorts only</button>
+          <button class="chip toggle" id="chip-has-comments" aria-pressed="false">Has comments</button>
+        </div>
+        <div class="status-line" id="video-status"></div>
+        <div class="bulkbar">
+          <input id="bulk-template" type="text" placeholder="Template, e.g. {title} #{n}">
+          <input id="bulk-regex" type="text" placeholder="Regex">
+          <input id="bulk-replacement" type="text" placeholder="Replacement">
+          <input id="bulk-desc-template" type="text" placeholder="Description template">
+          <input id="bulk-start" type="number" value="1" class="narrow" title="Start index">
+          <button id="bulk-plan-btn">Plan bulk edit</button>
+        </div>
+        <div id="bulk-plan" class="plan-box hidden">
+          <pre id="bulk-summary"></pre>
+          <table class="grid">
+            <thead><tr><th>YT ID</th><th>Old title</th><th>New title</th><th>Description</th></tr></thead>
+            <tbody id="bulk-changes"></tbody>
+          </table>
+          <button id="bulk-apply-btn" class="primary">Apply plan</button>
+        </div>
+        <div id="video-empty" class="empty-state hidden"></div>
+        <div class="table-wrap">
+          <table class="grid" id="video-table">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="video-select-all"></th>
+                <th>ID</th><th>Title</th><th>Visibility</th><th>Views</th><th>Comments</th><th>Published</th>
+              </tr>
+            </thead>
+            <tbody id="video-rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- EPISODES -->
+      <section id="section-episodes" class="panel">
+        <div class="toolbar">
+          <input id="episode-channel" type="number" min="1" placeholder="Channel ID">
+          <button id="episode-load-btn" class="primary">Load episodes</button>
+        </div>
+        <div class="status-line" id="episode-status"></div>
+        <div id="episode-list"></div>
+        <form id="schedule-form" class="card hidden">
+          <h2>Schedule episode <span id="schedule-episode-id"></span></h2>
+          <label>Cadence days <input id="schedule-cadence" type="number" min="1" value="7"></label>
+          <label>Starts at <input id="schedule-starts" type="datetime-local"></label>
+          <label class="check"><input id="schedule-public" type="checkbox"> Include public videos</label>
+          <button type="submit" class="primary">Apply schedule</button>
+          <div class="status-line" id="schedule-status"></div>
+          <ul id="schedule-result"></ul>
+        </form>
+      </section>
+
+      <!-- SCHEDULES -->
+      <section id="section-schedules" class="panel">
+        <div class="toolbar">
+          <button id="schedules-load-btn" class="primary">Refresh schedule rules</button>
+        </div>
+        <div class="status-line" id="schedules-status"></div>
+        <div id="schedules-empty"></div>
+        <div class="table-wrap">
+          <table class="grid">
+            <thead><tr><th>ID</th><th>Channel</th><th>Cadence (days)</th><th>Videos / episode</th><th>Starts at</th><th>Active</th></tr></thead>
+            <tbody id="schedule-rows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- PLAYLISTS -->
+      <section id="section-playlists" class="panel">
+        <div class="toolbar">
+          <input id="playlist-channel" type="number" min="1" placeholder="Channel ID">
+          <button id="playlist-load-btn" class="primary">Load playlists</button>
+        </div>
+        <div class="status-line" id="playlist-status"></div>
+        <div id="playlist-list"></div>
+        <form id="playlist-create-form" class="card">
+          <h2>Create playlist</h2>
+          <label>Channel ID <input id="playlist-new-channel" type="number" min="1"></label>
+          <label>Title <input id="playlist-new-title" type="text"></label>
+          <label>Description <textarea id="playlist-new-description" rows="3"></textarea></label>
+          <label>Privacy
+            <select id="playlist-new-privacy">
+              <option value="private">private</option>
+              <option value="unlisted">unlisted</option>
+              <option value="public">public</option>
+            </select>
+          </label>
+          <button type="submit" class="primary">Create</button>
+          <div class="status-line" id="playlist-create-status"></div>
+        </form>
+      </section>
+
+      <!-- COMMENTS -->
+      <section id="section-comments" class="panel">
+        <div class="toolbar">
+          <button id="comments-load-btn" class="primary">Refresh comments</button>
+        </div>
+        <div class="warn-box">Pinning a comment is a manual YouTube Studio step — the YouTube API has no pin endpoint. yt-manage posts and tracks the first comment here; you pin it in Studio.</div>
+        <div class="status-line" id="comments-status"></div>
+        <div id="comment-list"></div>
+      </section>
+
+      <!-- A/B TESTS -->
+      <section id="section-abtests" class="panel">
+        <div class="toolbar">
+          <input id="ab-video-id" type="number" min="1" placeholder="Video ID (blank = active tests)">
+          <button id="ab-load-btn" class="primary">Load tests</button>
+        </div>
+        <div class="status-line" id="ab-status"></div>
+        <div id="ab-list"></div>
+        <form id="ab-create-form" class="card">
+          <h2>Create A/B test</h2>
+          <label>Video ID <input id="ab-new-video" type="number" min="1"></label>
+          <label>Variant A <input id="ab-new-a" type="text"></label>
+          <label>Variant B <input id="ab-new-b" type="text"></label>
+          <button type="submit" class="primary">Create test</button>
+          <div class="status-line" id="ab-create-status"></div>
+        </form>
+      </section>
+
+      <!-- ACCOUNTS -->
+      <section id="section-accounts" class="panel">
+        <div class="toolbar">
+          <button id="accounts-load-btn" class="primary">Load accounts</button>
+          <button id="sync-all-btn">Sync all</button>
+          <span id="sync-spinner" class="spinner hidden"></span>
+          <span id="sync-progress" class="status-line"></span>
+        </div>
+        <div class="status-line" id="account-status"></div>
+        <div id="accounts-empty"></div>
+        <div class="table-wrap">
+          <table class="grid">
+            <thead><tr><th>Account</th><th>Label</th><th>Channel</th><th>YT Channel ID</th><th>Subscribers</th><th>Videos</th></tr></thead>
+            <tbody id="account-rows"></tbody>
+          </table>
+        </div>
+        <div id="sync-result" class="plan-box hidden"></div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="section-settings" class="panel">
+        <div class="card">
+          <h2>Detected configuration</h2>
+          <dl class="kv">
+            <dt>OAuth client</dt><dd id="set-oauth">…</dd>
+            <dt>Data directory</dt><dd id="set-datadir">…</dd>
+          </dl>
+          <p class="muted-text">Read-only: these are detected from your environment and data directory. A full settings screen (sync, email, defaults) arrives in a later wave.</p>
+        </div>
+        <div class="card">
+          <h2>Interface preferences</h2>
+          <label>Density
+            <select id="set-density">
+              <option value="comfortable">Comfortable</option>
+              <option value="dense">Dense</option>
+            </select>
+          </label>
+          <label class="check"><input id="set-sidebar-collapsed" type="checkbox"> Collapse sidebar to icons</label>
+          <p class="muted-text">Preferences apply instantly and are remembered on this machine.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
+<aside id="video-drawer" class="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <h2>Video <span id="edit-video-id"></span></h2>
+    <button id="drawer-close" title="Close (Esc)">✕</button>
+  </div>
+  <dl class="kv">
+    <dt>Visibility</dt><dd id="drawer-visibility"></dd>
+    <dt>Views</dt><dd id="drawer-views"></dd>
+    <dt>Comments</dt><dd id="drawer-comments"></dd>
+    <dt>Published</dt><dd id="drawer-published"></dd>
+    <dt>YouTube</dt><dd><a id="drawer-yt-link" href="#" target="_blank" rel="noopener">Watch on YouTube</a></dd>
+  </dl>
+  <form id="video-edit-form">
+    <label>Title <input id="edit-title" type="text"></label>
+    <label>Description <textarea id="edit-description" rows="6"></textarea></label>
+    <div class="row">
+      <button type="submit" class="primary">Save via YouTube API</button>
+      <button type="button" id="edit-cancel">Close</button>
     </div>
-    <div class="status-line" id="account-status"></div>
-    <table class="grid">
-      <thead><tr><th>Account</th><th>Label</th><th>Channel</th><th>YT Channel ID</th><th>Subscribers</th><th>Videos</th></tr></thead>
-      <tbody id="account-rows"></tbody>
-    </table>
-    <pre id="sync-result" class="plan-box hidden"></pre>
-  </section>
-</main>
+    <div class="status-line" id="edit-status"></div>
+  </form>
+</aside>
 
 <script src="/app.js"></script>
 </body>

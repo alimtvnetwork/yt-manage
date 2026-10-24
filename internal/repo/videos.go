@@ -16,6 +16,9 @@ type VideoQuery struct {
 	Visibility      string
 	PublishedAfter  *time.Time
 	PublishedBefore *time.Time
+	Sort            string
+	OnlyShorts      bool
+	HasComments     bool
 	Limit           int
 	Offset          int
 }
@@ -27,6 +30,8 @@ type VideoRepository interface {
 	GetByYTID(ytVideoID string) (*model.Video, error)
 	ListByChannel(channelID uint) ([]model.Video, error)
 	Search(q VideoQuery) ([]model.Video, error)
+	CountMatching(q VideoQuery) (int64, error)
+	DeleteByChannel(channelID uint) error
 	UpdateTitleDescription(id uint, title string, description string) error
 	UpdateSchedule(id uint, publishAt *time.Time, visibility model.Visibility) error
 	UpdateStats(id uint, views int64, likes int64, comments int64) error
@@ -71,7 +76,9 @@ func (r *videoRepository) ListByChannel(channelID uint) ([]model.Video, error) {
 	return videos, nil
 }
 
-func (r *videoRepository) Search(q VideoQuery) ([]model.Video, error) {
+// buildQuery applies the filters of q to a fresh query. Sort, limit,
+// and offset are applied by the callers that need them.
+func (r *videoRepository) buildQuery(q VideoQuery) *gorm.DB {
 	query := r.db.Model(&model.Video{})
 	if q.Text != "" {
 		query = query.Joins("JOIN videos_fts ON videos_fts.rowid = videos.id").
@@ -83,13 +90,35 @@ func (r *videoRepository) Search(q VideoQuery) ([]model.Video, error) {
 	if q.Visibility != "" {
 		query = query.Where("videos.visibility = ?", q.Visibility)
 	}
+	if q.OnlyShorts {
+		query = query.Where("videos.is_short = ?", true)
+	}
+	if q.HasComments {
+		query = query.Where("videos.comment_count > ?", 0)
+	}
 	if q.PublishedAfter != nil {
 		query = query.Where("videos.published_at >= ?", q.PublishedAfter)
 	}
 	if q.PublishedBefore != nil {
 		query = query.Where("videos.published_at <= ?", q.PublishedBefore)
 	}
-	query = query.Order("videos.id ASC")
+	return query
+}
+
+func (r *videoRepository) Search(q VideoQuery) ([]model.Video, error) {
+	query := r.buildQuery(q)
+	switch q.Sort {
+	case "newest":
+		query = query.Order("videos.published_at DESC").Order("videos.id DESC")
+	case "oldest":
+		query = query.Order("videos.published_at ASC").Order("videos.id ASC")
+	case "title":
+		query = query.Order("videos.title COLLATE NOCASE ASC")
+	case "views":
+		query = query.Order("videos.view_count DESC").Order("videos.id ASC")
+	default:
+		query = query.Order("videos.id ASC")
+	}
 	if q.Limit > 0 {
 		query = query.Limit(q.Limit)
 	}
@@ -101,6 +130,23 @@ func (r *videoRepository) Search(q VideoQuery) ([]model.Video, error) {
 		return nil, err
 	}
 	return videos, nil
+}
+
+// CountMatching returns how many videos match q's filters, ignoring
+// sort, limit, and offset.
+func (r *videoRepository) CountMatching(q VideoQuery) (int64, error) {
+	var count int64
+	if err := r.buildQuery(q).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// DeleteByChannel removes every mirrored video of a channel. It is
+// used to clear the demo dataset; real channels are removed through
+// account removal instead.
+func (r *videoRepository) DeleteByChannel(channelID uint) error {
+	return r.db.Where("channel_id = ?", channelID).Delete(&model.Video{}).Error
 }
 
 func (r *videoRepository) UpdateTitleDescription(id uint, title string, description string) error {

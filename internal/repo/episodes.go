@@ -14,6 +14,7 @@ type EpisodeRepository interface {
 	ListByChannel(channelID uint) ([]model.Episode, error)
 	ReplaceParts(episodeID uint, parts []model.EpisodePart) error
 	ListParts(episodeID uint) ([]model.EpisodePart, error)
+	DeleteByChannel(channelID uint) error
 }
 
 type episodeRepository struct {
@@ -67,4 +68,21 @@ func (r *episodeRepository) ListParts(episodeID uint) ([]model.EpisodePart, erro
 		return nil, err
 	}
 	return parts, nil
+}
+
+// DeleteByChannel removes a channel's episodes and their parts. It is
+// used to clear the demo dataset.
+func (r *episodeRepository) DeleteByChannel(channelID uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var episodes []model.Episode
+		if err := tx.Where("channel_id = ?", channelID).Find(&episodes).Error; err != nil {
+			return err
+		}
+		for _, episode := range episodes {
+			if err := tx.Where("episode_id = ?", episode.ID).Delete(&model.EpisodePart{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("channel_id = ?", channelID).Delete(&model.Episode{}).Error
+	})
 }

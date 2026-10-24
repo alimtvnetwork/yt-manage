@@ -13,6 +13,7 @@ type ChannelRepository interface {
 	GetByYTID(ytChannelID string) (*model.Channel, error)
 	ListByAccount(accountID uint) ([]model.Channel, error)
 	List() ([]model.Channel, error)
+	Delete(id uint) error
 }
 
 type channelRepository struct {
@@ -50,4 +51,10 @@ func (r *channelRepository) List() ([]model.Channel, error) {
 		return nil, err
 	}
 	return channels, nil
+}
+
+// Delete removes one channel row. Callers delete the channel's
+// content first; this is used for the demo dataset.
+func (r *channelRepository) Delete(id uint) error {
+	return r.db.Delete(&model.Channel{}, id).Error
 }

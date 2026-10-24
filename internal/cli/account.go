@@ -88,16 +88,19 @@ func runAccountAdd(args []string) int {
 	}
 
 	ctx := context.Background()
+	fmt.Fprintln(os.Stdout, "Step 1 of 3: opening the Google consent flow in your browser...")
 	token, err := oauth.Authorize(ctx, cfg, os.Stdout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yt-manage: %v\n", err)
 		return 1
 	}
+	fmt.Fprintln(os.Stdout, "Step 2 of 3: consent received; exchanging the token...")
 	svc, err := ytapi.NewService(ctx, cfg, token)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yt-manage: %v\n", err)
 		return 1
 	}
+	fmt.Fprintln(os.Stdout, "Step 3 of 3: fetching your channel...")
 	ch, err := ytapi.MyChannel(ctx, svc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yt-manage: %v\n", err)
@@ -179,6 +182,8 @@ func runAccountAdd(args []string) int {
 		fmt.Fprintf(os.Stdout, "Connected account %s (%s)\n", displayLabel, channelTitle)
 	}
 	fmt.Fprintln(os.Stdout, "Refresh token stored AES-GCM encrypted in the local accounts database.")
+	fmt.Fprintln(os.Stdout, "Warning: if your Google Cloud project's consent screen is still in Testing mode, Google expires refresh tokens after 7 days. Publish the consent screen (leave Testing mode) so this account stays connected.")
+	fmt.Fprintln(os.Stdout, "Next step: run \"yt-manage sync run\" to mirror your channel, then \"yt-manage serve\" for the browser UI.")
 	return 0
 }
 
