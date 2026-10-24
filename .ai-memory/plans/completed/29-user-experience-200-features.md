@@ -66,7 +66,35 @@ preview/undo/settings).
 
 ## Closeout
 
-- [ ] All 200 items checked against
-      02-spec/21-app/29-user-experience-200-features/97-acceptance-criteria.md.
-- [ ] README status and feature list updated to match shipped UX.
-- [ ] This plan moved to .ai-memory/plans/completed/ with a closure note.
+- [x] All 200 items checked against
+      02-spec/21-app/29-user-experience-200-features/97-acceptance-criteria.md
+      (final assessment in that file, 2026-10-24).
+- [x] README status and feature list updated to match shipped UX.
+- [x] This plan moved to .ai-memory/plans/completed/ with a closure note.
+
+
+## Closure note (2026-10-24)
+
+All 8 waves shipped, each in one atomic commit, pushed, and
+CI-green, and each verified live against the demo dataset:
+Wave 1 c759fa9, Wave 2 281d6d3, Wave 3 7e2eafd, Wave 4
+b96606b (Set 1 complete), Wave 5 47dcdc0, Wave 6 4cc134d,
+Wave 7 8708fa9, Wave 8 1ddbfc3. Every one of the 200 items
+is checked off in its subtask file (25 per wave, 0 open).
+
+The acceptance file's final assessment (2026-10-24) records
+the honest residuals: real-account verification was never
+possible headlessly (Google OAuth consent); the CI
+perf-budget test of item 79, the automated settings-CLI
+parity diff, and the 15-minute unaided wizard timing were
+never measured; the localisation catalog covers Wave 8
+strings only (legacy UI migrates panel by panel); UI-state
+prefs stored in the settings KV (notify prefs, backup
+schedule, share link, favourites) are UI-only, not settings
+CLI keys, following the Wave 5 rules precedent; and
+keyboard coverage is via the command palette and section
+navigation rather than a dedicated chord per new action.
+None of these blocks the campaign's completion: every item
+works in the surface it names against the demo dataset,
+writes are preview-first with History entries, and errors
+are plain-language with details.

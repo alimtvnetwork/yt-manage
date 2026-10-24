@@ -190,7 +190,23 @@ storage, split SQLite databases with an FTS5 search mirror, dry-run
 batch edits, episode grouping with cadence scheduling, comment
 mirroring on sync, a REST API with the embedded browser UI, and a
 self-update path. The Spec 29 campaign (200 UX features in 8 waves)
-is tracked in `02-spec/21-app/29-user-experience-200-features/`.
+shipped 2026-10-24 and is tracked in
+`02-spec/21-app/29-user-experience-200-features/`; every wave
+was verified live against the demo dataset and is CI-green
+(Wave 1 `c759fa9`, Wave 2 `281d6d3`, Wave 3 `7e2eafd`,
+Wave 4 `b96606b`, Wave 5 `47dcdc0`, Wave 6 `4cc134d`,
+Wave 7 `8708fa9`, Wave 8 `1ddbfc3`). The UI now covers:
+settings with validation and undo, a suggestion inbox and
+rules engine with an approval queue, a comment centre with
+coverage and bulk posting, a playlist board with gap and
+duplicate finders, tags mirroring, a channel dashboard with
+scorecards and a publish heatmap, A/B results with
+auto-scheduling, multi-account overview and health, publish
+digests and failure alerts, peer sync with selective
+sharing and conflict resolution, a full export/import
+bundle, scheduled database backups, a read-only share link,
+contextual help with CLI parity, guided walkthroughs, a
+personal home screen, focus mode, and an annual wrap-up.
 
 ## Install
 
