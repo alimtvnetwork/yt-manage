@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // MailSettings holds the SMTP/IMAP connection settings used for
@@ -28,7 +29,25 @@ type Settings struct {
 	DefaultAccount   int          `json:"default_account"`
 	DefaultChannel   int          `json:"default_channel"`
 	ReadOnly         bool         `json:"read_only"`
+	QuietHoursStart  int          `json:"quiet_hours_start"`
+	QuietHoursEnd    int          `json:"quiet_hours_end"`
+	WebhookURL       string       `json:"webhook_url"`
+	WebhookSecret    string       `json:"webhook_secret"`
 	Mail             MailSettings `json:"mail"`
+}
+
+// InQuietHours reports whether the given moment falls inside the
+// configured quiet window. Start == end disables the window. The
+// window may wrap past midnight (for example 22 -> 7).
+func (s *Settings) InQuietHours(at time.Time) bool {
+	if s.QuietHoursStart == s.QuietHoursEnd {
+		return false
+	}
+	hour := at.Hour()
+	if s.QuietHoursStart < s.QuietHoursEnd {
+		return hour >= s.QuietHoursStart && hour < s.QuietHoursEnd
+	}
+	return hour >= s.QuietHoursStart || hour < s.QuietHoursEnd
 }
 
 // HomeDir returns the yt-manage home directory: $YT_MANAGE_HOME when

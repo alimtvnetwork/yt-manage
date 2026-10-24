@@ -98,6 +98,17 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		})
 		s.addQuota(result.UnitsEstimate)
 		s.recordActivity("sync", fmt.Sprintf("Synced %s: %d videos, %d playlists, %d comments", result.ChannelTitle, result.Videos, result.Playlists, result.Comments), "")
+		if cfg, cfgErr := config.LoadSettings(s.home); cfgErr == nil {
+			s.fireWebhook(cfg, "sync.completed", map[string]interface{}{"accountId": result.AccountID, "videos": result.Videos, "comments": result.Comments})
+		}
+	}
+	if len(response.Results) > 0 {
+		// New content may trigger rules and watched-series drafts
+		// (items 112, 115). Grouping hints and title suggestions
+		// are computed live from the mirror, so they are fresh
+		// after every sync by construction (items 102, 103).
+		s.evaluateAllRules(r.Context())
+		s.draftWatchedSeries(r.Context())
 	}
 	writeOK(w, response)
 }

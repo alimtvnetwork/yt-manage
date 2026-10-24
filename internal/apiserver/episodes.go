@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/alimtvnetwork/yt-manage/internal/config"
 	"github.com/alimtvnetwork/yt-manage/internal/model"
 	"github.com/alimtvnetwork/yt-manage/internal/scheduler"
 )
@@ -220,6 +221,9 @@ func (s *Server) handleScheduleEpisode(w http.ResponseWriter, r *http.Request) {
 	if applied > 0 {
 		detail, _ := json.Marshal(undoEntries[:applied])
 		s.recordActivity("schedule", fmt.Sprintf("Scheduled %d videos on channel %d", applied, episode.ChannelID), string(detail))
+		if cfg, cfgErr := config.LoadSettings(s.home); cfgErr == nil {
+			s.fireWebhook(cfg, "schedule.applied", map[string]interface{}{"applied": applied, "channelId": episode.ChannelID})
+		}
 		s.addQuota(50 * applied)
 	}
 	entries := make([]scheduleEntryDTO, 0, len(plan.Entries))

@@ -14,6 +14,7 @@ import (
 	"github.com/alimtvnetwork/yt-manage/internal/batch"
 	"github.com/alimtvnetwork/yt-manage/internal/config"
 	"github.com/alimtvnetwork/yt-manage/internal/repo"
+	"github.com/alimtvnetwork/yt-manage/internal/webhook"
 )
 
 // Server is the yt-manage API server.
@@ -25,6 +26,7 @@ type Server struct {
 	mu            sync.Mutex
 	plans         map[string]storedPlan
 	forceReadOnly bool
+	heldWebhooks  []webhook.Event
 }
 
 // SetForceReadOnly pins the server into read-only mode regardless
@@ -81,6 +83,7 @@ func New(store *repo.Store, home string, key []byte) *Server {
 
 // ListenAndServe serves the API and UI on addr until it fails.
 func (s *Server) ListenAndServe(addr string) error {
+	s.startAutoLoop()
 	return http.ListenAndServe(addr, s.readOnlyMiddleware(s.mux))
 }
 
@@ -134,6 +137,29 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/activity/export", s.handleActivityExport)
 	s.mux.HandleFunc("GET /api/backups", s.handleListBackups)
 	s.mux.HandleFunc("POST /api/backups/restore", s.handleRestoreBackup)
+	s.mux.HandleFunc("GET /api/suggestions", s.handleListSuggestions)
+	s.mux.HandleFunc("POST /api/suggestions/state", s.handleSuggestionState)
+	s.mux.HandleFunc("GET /api/series", s.handleListSeries)
+	s.mux.HandleFunc("GET /api/channels/{id}/defaults", s.handleGetChannelDefaults)
+	s.mux.HandleFunc("PUT /api/channels/{id}/defaults", s.handlePutChannelDefaults)
+	s.mux.HandleFunc("GET /api/rules", s.handleListRules)
+	s.mux.HandleFunc("POST /api/rules", s.handleSaveRule)
+	s.mux.HandleFunc("DELETE /api/rules/{id}", s.handleDeleteRule)
+	s.mux.HandleFunc("POST /api/rules/dry-run", s.handleRuleDryRun)
+	s.mux.HandleFunc("GET /api/proposals", s.handleListProposals)
+	s.mux.HandleFunc("POST /api/proposals/{id}/approve", s.handleApproveProposal)
+	s.mux.HandleFunc("POST /api/proposals/{id}/reject", s.handleRejectProposal)
+	s.mux.HandleFunc("POST /api/proposals/approve-all", s.handleApproveAllProposals)
+	s.mux.HandleFunc("POST /api/autosync/pause", s.handleAutoSyncPause)
+	s.mux.HandleFunc("GET /api/workflows/export", s.handleExportWorkflow)
+	s.mux.HandleFunc("POST /api/workflows/import", s.handleImportWorkflow)
+	s.mux.HandleFunc("GET /api/comment-centre", s.handleCommentCentre)
+	s.mux.HandleFunc("POST /api/videos/{id}/first-comment", s.handlePostFirstComment)
+	s.mux.HandleFunc("POST /api/comments/{id}/pin", s.handlePinComment)
+	s.mux.HandleFunc("PATCH /api/comments/{id}", s.handleEditComment)
+	s.mux.HandleFunc("GET /api/comments/{id}/history", s.handleCommentHistory)
+	s.mux.HandleFunc("POST /api/comments/{id}/restore", s.handleRestoreComment)
+	s.mux.HandleFunc("POST /api/comments/preview", s.handleCommentPreview)
 	s.mux.HandleFunc("POST /api/peer/push", s.handlePeerPush)
 	s.mux.HandleFunc("POST /api/peer/pull", s.handlePeerPull)
 	s.mux.HandleFunc("GET /", s.handleIndex)

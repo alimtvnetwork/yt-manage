@@ -6,6 +6,7 @@ package syncer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -141,7 +142,71 @@ func RunAccount(ctx context.Context, home string, store *repo.Store, key []byte,
 	if err := recordSyncSuccess(store, accountID, "comments", runAt); err != nil {
 		return nil, err
 	}
+	reportAnomalies(store, accountID, localChannel.ID)
 	return result, nil
+}
+
+// statSnapshot is one video's counters in a stats snapshot.
+type statSnapshot struct {
+	Views      int64  `json:"v"`
+	Comments   int64  `json:"c"`
+	Visibility string `json:"vis"`
+}
+
+// reportAnomalies (spec 29, item 109) compares the channel's
+// current mirror against the snapshot taken at the previous sync
+// and records one activity entry summarising what changed:
+// counters that dropped, visibility that changed, videos that
+// vanished. The new state then becomes the snapshot. Best effort:
+// anomalies never fail a sync.
+func reportAnomalies(store *repo.Store, accountID uint, channelID uint) {
+	key := fmt.Sprintf("statsnap:%d", accountID)
+	videos, err := store.Videos.ListByChannel(channelID)
+	if err != nil || len(videos) > 5000 {
+		return
+	}
+	current := map[string]statSnapshot{}
+	for _, video := range videos {
+		current[video.YTVideoID] = statSnapshot{
+			Views: video.ViewCount, Comments: video.CommentCount,
+			Visibility: video.Visibility.String(),
+		}
+	}
+	previous := map[string]statSnapshot{}
+	if raw, found, getErr := store.Settings.Get(key); getErr == nil && found {
+		_ = json.Unmarshal([]byte(raw), &previous)
+	}
+	if len(previous) > 0 {
+		changes := []string{}
+		for ytID, before := range previous {
+			now, stillThere := current[ytID]
+			if !stillThere {
+				changes = append(changes, fmt.Sprintf("video %s vanished", ytID))
+				continue
+			}
+			if now.Views < before.Views {
+				changes = append(changes, fmt.Sprintf("%s views dropped %d -> %d", ytID, before.Views, now.Views))
+			}
+			if now.Comments < before.Comments {
+				changes = append(changes, fmt.Sprintf("%s comments dropped %d -> %d", ytID, before.Comments, now.Comments))
+			}
+			if now.Visibility != before.Visibility {
+				changes = append(changes, fmt.Sprintf("%s visibility %s -> %s", ytID, before.Visibility, now.Visibility))
+			}
+		}
+		if len(changes) > 0 {
+			shown := changes
+			if len(shown) > 10 {
+				shown = shown[:10]
+			}
+			_, _ = store.Activity.Record("anomaly",
+				fmt.Sprintf("%d thing(s) changed since last sync on account %d", len(changes), accountID),
+				strings.Join(shown, "; "))
+		}
+	}
+	if data, err := json.Marshal(current); err == nil {
+		_ = store.Settings.Set(key, string(data))
+	}
 }
 
 // maxCommentVideosPerSync caps the comment mirroring of one run:

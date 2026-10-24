@@ -11,11 +11,13 @@ import (
 type CommentRepository interface {
 	UpsertByYTID(comment *model.Comment) error
 	GetByYTID(ytCommentID string) (*model.Comment, error)
+	GetByID(id uint) (*model.Comment, error)
 	GetFirstByVideo(videoID uint) (*model.Comment, error)
 	ListByVideo(videoID uint) ([]model.Comment, error)
 	ListFirstComments(limit int) ([]model.Comment, error)
 	CountFirstComments() (int64, error)
 	UpdateText(id uint, text string) error
+	SetPinned(id uint, pinned bool) error
 }
 
 type commentRepository struct {
@@ -34,6 +36,14 @@ func (r *commentRepository) UpsertByYTID(comment *model.Comment) error {
 func (r *commentRepository) GetByYTID(ytCommentID string) (*model.Comment, error) {
 	var comment model.Comment
 	if err := r.db.Where("yt_comment_id = ?", ytCommentID).First(&comment).Error; err != nil {
+		return nil, err
+	}
+	return &comment, nil
+}
+
+func (r *commentRepository) GetByID(id uint) (*model.Comment, error) {
+	var comment model.Comment
+	if err := r.db.First(&comment, id).Error; err != nil {
 		return nil, err
 	}
 	return &comment, nil
@@ -79,4 +89,8 @@ func (r *commentRepository) CountFirstComments() (int64, error) {
 
 func (r *commentRepository) UpdateText(id uint, text string) error {
 	return r.db.Model(&model.Comment{}).Where("id = ?", id).Update("text", text).Error
+}
+
+func (r *commentRepository) SetPinned(id uint, pinned bool) error {
+	return r.db.Model(&model.Comment{}).Where("id = ?", id).Update("is_pinned_known", pinned).Error
 }

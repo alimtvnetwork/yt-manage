@@ -66,6 +66,12 @@ func EditFirstComment(ctx context.Context, svc *youtube.Service, store *repo.Sto
 	}).Context(ctx).Do(); err != nil {
 		return nil, fmt.Errorf("edit first comment %s: %w", existing.YTCommentID, err)
 	}
+	// Record the replaced text so any prior version can be
+	// restored later (spec 29, item 125). Best effort: a history
+	// failure must not fail an edit that already succeeded.
+	if store.CommentHistory != nil {
+		_ = store.CommentHistory.Record(existing.ID, video.ID, existing.Text)
+	}
 	if err := store.Comments.UpdateText(existing.ID, newText); err != nil {
 		return nil, fmt.Errorf("mirror edited comment %d: %w", existing.ID, err)
 	}

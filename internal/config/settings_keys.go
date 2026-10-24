@@ -26,6 +26,10 @@ func SettingKeys() []SettingKey {
 		{Key: "default_account", Label: "Default account (CLI)", Group: "General", Type: "int", Default: "0"},
 		{Key: "default_channel", Label: "Default channel (CLI)", Group: "General", Type: "int", Default: "0"},
 		{Key: "read_only", Label: "Read-only mode (block all writes)", Group: "General", Type: "bool", Default: "false"},
+		{Key: "quiet_hours_start", Label: "Quiet hours start (0-23, = end disables)", Group: "Automation", Type: "int", Default: "0"},
+		{Key: "quiet_hours_end", Label: "Quiet hours end (0-23)", Group: "Automation", Type: "int", Default: "0"},
+		{Key: "webhook_url", Label: "Webhook URL (events POST here)", Group: "Automation", Type: "string", Default: ""},
+		{Key: "webhook_secret", Label: "Webhook signing secret", Group: "Automation", Type: "secret", Default: ""},
 		{Key: "mail.smtp_host", Label: "SMTP host", Group: "Mail", Type: "string", Default: ""},
 		{Key: "mail.smtp_port", Label: "SMTP port", Group: "Mail", Type: "port", Default: "0"},
 		{Key: "mail.imap_host", Label: "IMAP host", Group: "Mail", Type: "string", Default: ""},
@@ -59,6 +63,17 @@ func (s *Settings) GetByKey(key string) (string, bool) {
 		return strconv.Itoa(s.DefaultChannel), true
 	case "read_only":
 		return strconv.FormatBool(s.ReadOnly), true
+	case "quiet_hours_start":
+		return strconv.Itoa(s.QuietHoursStart), true
+	case "quiet_hours_end":
+		return strconv.Itoa(s.QuietHoursEnd), true
+	case "webhook_url":
+		return s.WebhookURL, true
+	case "webhook_secret":
+		if s.WebhookSecret != "" {
+			return "set", true
+		}
+		return "", true
 	case "mail.smtp_host":
 		return s.Mail.SMTPHost, true
 	case "mail.smtp_port":
@@ -106,6 +121,15 @@ func (s *Settings) SetByKey(key string, value string) error {
 			return fmt.Errorf("%s must be true or false", def.Label)
 		}
 	}
+	if key == "quiet_hours_start" || key == "quiet_hours_end" {
+		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
+		if parsed < 0 || parsed > 23 {
+			return fmt.Errorf("%s must be an hour between 0 and 23", def.Label)
+		}
+	}
+	if key == "webhook_url" && value != "" && !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
+		return fmt.Errorf("%s must start with http:// or https://", def.Label)
+	}
 	switch key {
 	case "daily_quota_budget":
 		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
@@ -121,6 +145,16 @@ func (s *Settings) SetByKey(key string, value string) error {
 	case "read_only":
 		parsed, _ := strconv.ParseBool(strings.TrimSpace(value))
 		s.ReadOnly = parsed
+	case "quiet_hours_start":
+		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
+		s.QuietHoursStart = parsed
+	case "quiet_hours_end":
+		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
+		s.QuietHoursEnd = parsed
+	case "webhook_url":
+		s.WebhookURL = value
+	case "webhook_secret":
+		s.WebhookSecret = value
 	case "mail.smtp_host":
 		s.Mail.SMTPHost = value
 	case "mail.smtp_port":
@@ -146,7 +180,8 @@ func (s *Settings) Snapshot() (map[string]string, []string) {
 	excluded := []string{}
 	for _, def := range SettingKeys() {
 		if def.Type == "secret" {
-			if s.Mail.Password != "" {
+			value, _ := s.GetByKey(def.Key)
+			if value == "set" {
 				excluded = append(excluded, def.Key)
 			}
 			continue

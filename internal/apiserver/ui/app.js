@@ -40,12 +40,25 @@ const state = {
   paletteIndex: 0,
   paletteItems: [],
   playlistEdits: new Map(),
+  // Wave 5 (items 101-125)
+  inbox: [],
+  rules: [],
+  proposals: [],
+  series: [],
+  wizard: null,
+  commentCentre: [],
+  ccFilter: "all",
+  ccRendered: {},
+  channelDefaults: new Map(),
 };
 
 const SECTIONS = {
   home: "Home",
+  suggestions: "Suggestions",
   videos: "Videos",
   episodes: "Episodes",
+  automation: "Automation",
+  commentcentre: "Comment Centre",
   schedules: "Schedules",
   playlists: "Playlists",
   comments: "Comments",
@@ -606,8 +619,15 @@ el("side-nav").addEventListener("click", (event) => {
 });
 
 function onEnterSection(section) {
+  if (section === "home") loadHomeSuggestions();
+  if (section === "suggestions") loadInbox();
   if (section === "videos" && !state.videosLoaded) loadVideos();
-  if (section === "episodes" && el("episode-channel").value) loadEpisodes();
+  if (section === "episodes") {
+    loadSeries();
+    if (el("episode-channel").value) loadEpisodes();
+  }
+  if (section === "automation") loadAutomation();
+  if (section === "commentcentre") loadCommentCentre();
   if (section === "playlists" && el("playlist-channel").value) loadPlaylists();
   if (section === "schedules") loadSchedules();
   if (section === "comments") loadComments();
@@ -725,6 +745,8 @@ function renderStatus(status) {
   renderChecklist(status);
   renderWhatNext(status);
   renderScopeLabel();
+  fillChannelSelects();
+  if (state.status && state.status.autoSync) renderAutoSyncCard();
 }
 
 el("home-stats").addEventListener("click", (event) => {
@@ -1814,6 +1836,15 @@ el("bulk-changes").addEventListener("change", (event) => {
 async function buildBulkPlan() {
   setStatus("video-status", "Building plan...");
   const vs = currentVideoState();
+  // Smart defaults (item 108): an empty template falls back to the
+  // scoped channel's remembered rename template.
+  if (vs.channel && !el("bulk-template").value) {
+    const defaults = await fetchChannelDefaults(vs.channel);
+    if (defaults && defaults.renameTemplate) {
+      el("bulk-template").value = defaults.renameTemplate;
+      updateBulkPreview();
+    }
+  }
   const body = {
     q: vs.q,
     visibility: vs.visibility,
@@ -2175,6 +2206,18 @@ el("episode-list").addEventListener("click", async (event) => {
   state.currentEpisodeId = button.dataset.schedule;
   const episode = state.episodes.find((item) => String(item.id) === String(state.currentEpisodeId));
   if (episode) recordRecentEpisode(episode);
+  // Smart defaults (item 108): pre-fill the cadence from the
+  // channel's remembered default when it has one.
+  if (episode) {
+    fetchChannelDefaults(episode.channelId).then((defaults) => {
+      if (!defaults || !(defaults.cadenceDays > 0)) return;
+      if (String(state.currentEpisodeId) !== String(episode.id)) return;
+      el("schedule-cadence").value = defaults.cadenceDays;
+      el("schedule-cadence-choice").value =
+        ["1", "7", "14", "21"].indexOf(String(defaults.cadenceDays)) !== -1 ? String(defaults.cadenceDays) : "custom";
+      queueSchedulePlan();
+    });
+  }
   el("schedule-form").classList.remove("hidden");
   el("schedule-episode-id").textContent = "#" + state.currentEpisodeId;
   setStatus("schedule-status", "");
@@ -2706,6 +2749,1070 @@ async function loadComments() {
 
 el("comments-load-btn").addEventListener("click", loadComments);
 
+// ============================================================ wave 5
+// Smart suggestions, automation and the comment centre
+// (items 101-125).
+
+// ------------------------------------------------- channel defaults
+// Per-channel smart defaults (item 108), also carrying the
+// pipeline chain (item 114) and watched series (item 115).
+function normalizeDefaults(data) {
+  const d = data || {};
+  return {
+    renameTemplate: d.renameTemplate || "",
+    cadenceDays: d.cadenceDays || 0,
+    commentTemplate: d.commentTemplate || "",
+    pipelineComment: !!d.pipelineComment,
+    pipelineEmail: !!d.pipelineEmail,
+    pipelinePlaylistId: d.pipelinePlaylistId || 0,
+    watchSeries: Array.isArray(d.watchSeries) ? d.watchSeries : [],
+  };
+}
+
+async function fetchChannelDefaults(channelId, force) {
+  if (!channelId) return null;
+  const key = String(channelId);
+  if (!force && state.channelDefaults.has(key)) return state.channelDefaults.get(key);
+  try {
+    const data = normalizeDefaults(await api("GET", "/api/channels/" + channelId + "/defaults"));
+    state.channelDefaults.set(key, data);
+    return data;
+  } catch (err) {
+    return null;
+  }
+}
+
+function fillChannelSelects() {
+  const channels = (state.status && state.status.channels) || [];
+  const options = channels.map((channel) =>
+    "<option value=\"" + channel.id + "\">" + escapeHTML(channel.title) + "</option>").join("");
+  const cd = el("cd-channel");
+  if (cd) {
+    const current = cd.value;
+    cd.innerHTML = "<option value=\"\">Choose a channel…</option>" + options;
+    if (current) cd.value = current;
+  }
+  const ruleChannel = el("rule-match-channel");
+  if (ruleChannel) {
+    const current = ruleChannel.value;
+    ruleChannel.innerHTML = "<option value=\"\">Any channel</option>" + options;
+    if (current) ruleChannel.value = current;
+  }
+}
+
+// ----------------------------------------------------- suggestions
+const SUGGESTION_TYPES = {
+  patterns: "Pattern",
+  grouping: "Grouping",
+  "title-health": "Title health",
+  cadence: "Cadence",
+  "dead-slots": "Dead slot",
+  thumbnails: "Thumbnail check",
+  anomalies: "Anomaly",
+};
+
+async function fetchSuggestions() {
+  const data = await api("GET", "/api/suggestions");
+  state.inbox = Array.isArray(data) ? data : (data.suggestions || []);
+  return state.inbox;
+}
+
+function activeSuggestions() {
+  return (state.inbox || []).filter((item) => (item.state || "active") === "active");
+}
+
+function suggestionChannelName(suggestion) {
+  if (!suggestion.channelId) return "";
+  return channelTitle(suggestion.channelId) || ("channel " + suggestion.channelId);
+}
+
+function suggestionPrimaryAction(suggestion) {
+  switch (suggestion.type) {
+    case "patterns": return { label: "Open in Videos", act: "videos" };
+    case "title-health": return { label: "Fix in Bulk Edit", act: "videos" };
+    case "grouping": return { label: "Group episodes", act: "group" };
+    case "cadence": return { label: "Use this cadence", act: "cadence" };
+    case "thumbnails": return { label: "Review thumbnails", act: "thumbs" };
+    case "dead-slots": return { label: "Open calendar", act: "calendar" };
+    case "anomalies": return { label: "Open History", act: "history" };
+    default: return null;
+  }
+}
+
+// Home preview (item 101): top 3 active suggestions with a Review
+// jump into the full inbox below.
+async function loadHomeSuggestions() {
+  const card = el("home-suggestions-card");
+  if (!card) return;
+  try {
+    await fetchSuggestions();
+  } catch (err) {
+    card.classList.add("hidden");
+    return;
+  }
+  const active = activeSuggestions();
+  setBadge("badge-suggestions", active.length);
+  if (active.length === 0) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  const sorted = active.slice().sort((a, b) =>
+    (a.type === "patterns" ? 0 : 1) - (b.type === "patterns" ? 0 : 1));
+  el("home-suggestions-list").innerHTML = sorted.slice(0, 3).map((suggestion) =>
+    "<div class=\"suggestion-row\">" +
+    "<span class=\"type-badge\">" + escapeHTML(SUGGESTION_TYPES[suggestion.type] || suggestion.type || "Suggestion") + "</span>" +
+    "<span class=\"suggestion-text\"><strong>" + escapeHTML(suggestion.title || "") + "</strong>" +
+    (suggestion.detail ? " <span class=\"muted-text\">" + escapeHTML(suggestion.detail) + "</span>" : "") + "</span>" +
+    "<button data-home-review=\"1\">Review</button></div>").join("");
+}
+
+el("home-suggestions-open").addEventListener("click", () => navigate("suggestions"));
+el("home-suggestions-list").addEventListener("click", (event) => {
+  if (event.target.closest("[data-home-review]")) navigate("suggestions");
+});
+
+// The inbox itself (items 102, 110): every suggestion with its
+// type-specific action plus dismiss / snooze / reset.
+async function loadInbox() {
+  setStatus("inbox-status", "Loading suggestions...");
+  try {
+    await fetchSuggestions();
+    renderInbox();
+    const count = activeSuggestions().length;
+    setBadge("badge-suggestions", count);
+    setStatus("inbox-status", count + (count === 1 ? " active suggestion" : " active suggestions"), "ok");
+  } catch (err) {
+    setStatus("inbox-status", friendlyError(err), "error");
+    showErrorToast(err, "suggestions");
+  }
+}
+
+function renderInbox() {
+  const box = el("inbox-list");
+  const showHidden = el("inbox-show-hidden").checked;
+  const items = (state.inbox || [])
+    .map((suggestion, index) => ({ suggestion, index }))
+    .filter(({ suggestion }) => showHidden || (suggestion.state || "active") === "active");
+  if (items.length === 0) {
+    box.innerHTML = "<div class=\"empty-state\"><span class=\"state-art\" aria-hidden=\"true\">✦</span><h3>Nothing to suggest right now</h3>" +
+      "<p>When patterns, title problems or scheduling hints show up in your synced channels, they collect here.</p></div>";
+    return;
+  }
+  box.innerHTML = items.map(({ suggestion, index }) => {
+    const stateName = suggestion.state || "active";
+    const primary = suggestionPrimaryAction(suggestion);
+    const videoCount = (suggestion.videoIds || []).length;
+    let buttons = "";
+    if (primary) {
+      buttons += "<button class=\"primary\" data-sugg-act=\"" + primary.act + "\" data-sugg-index=\"" + index + "\">" +
+        escapeHTML(primary.label) + "</button>";
+    }
+    if (stateName === "active") {
+      buttons += "<button data-sugg-dismiss=\"" + escapeHTML(suggestion.type) + "\">Dismiss</button>" +
+        "<button data-sugg-snooze=\"" + escapeHTML(suggestion.type) + "\">Snooze 7 days</button>";
+    } else {
+      buttons += "<span class=\"pill\">" + escapeHTML(stateName) + "</span>" +
+        "<button data-sugg-reset=\"" + escapeHTML(suggestion.type) + "\">Reset</button>";
+    }
+    return "<div class=\"card suggestion-card" + (stateName !== "active" ? " is-hidden-state" : "") + "\">" +
+      "<div class=\"suggestion-head\">" +
+      "<span class=\"type-badge\">" + escapeHTML(SUGGESTION_TYPES[suggestion.type] || suggestion.type || "Suggestion") + "</span>" +
+      (suggestionChannelName(suggestion) ? "<span class=\"muted-text\">" + escapeHTML(suggestionChannelName(suggestion)) + "</span>" : "") +
+      (videoCount ? "<span class=\"pill\">" + videoCount + (videoCount === 1 ? " video" : " videos") + "</span>" : "") +
+      "</div>" +
+      "<h3>" + escapeHTML(suggestion.title || "") + "</h3>" +
+      (suggestion.detail ? "<p>" + escapeHTML(suggestion.detail) + "</p>" : "") +
+      "<div class=\"row\">" + buttons + "</div></div>";
+  }).join("");
+}
+
+el("inbox-load-btn").addEventListener("click", loadInbox);
+el("inbox-show-hidden").addEventListener("change", renderInbox);
+
+async function setSuggestionState(type, action, days) {
+  try {
+    const body = { type, action };
+    if (days) body.days = days;
+    await api("POST", "/api/suggestions/state", body);
+    showToast(action === "dismiss" ? "Suggestion type dismissed"
+      : action === "snooze" ? "Snoozed for " + days + " days" : "Suggestion type reset", "ok");
+    await loadInbox();
+    loadHomeSuggestions();
+  } catch (err) {
+    showErrorToast(err, "suggestions");
+  }
+}
+
+function cadenceDaysFromSuggestion(suggestion) {
+  const data = suggestion.data || {};
+  const raw = data.cadenceDays !== undefined ? data.cadenceDays
+    : data.days !== undefined ? data.days
+    : data.cadence !== undefined ? data.cadence : null;
+  if (raw !== null && !isNaN(Number(raw))) return Number(raw);
+  const text = (suggestion.title || "") + " " + (suggestion.detail || "");
+  const match = text.match(/(\d+)\s*-?\s*day/i);
+  return match ? Number(match[1]) : 0;
+}
+
+async function runSuggestionAction(act, suggestion) {
+  if (act === "videos") {
+    if (suggestion.channelId) el("video-channel").value = String(suggestion.channelId);
+    setVisibility("", false);
+    setToggleChips(false, false, false);
+    state.videosLoaded = false;
+    navigate("videos");
+    loadVideos();
+    return;
+  }
+  if (act === "group") {
+    if (suggestion.channelId) el("episode-channel").value = String(suggestion.channelId);
+    navigate("episodes");
+    loadEpisodes();
+    return;
+  }
+  if (act === "calendar") { navigate("schedules"); return; }
+  if (act === "history") { navigate("history"); return; }
+  if (act === "cadence") {
+    const days = cadenceDaysFromSuggestion(suggestion);
+    if (!days || !suggestion.channelId) {
+      showToast("Could not read a cadence from this suggestion — set it under Settings → Channel defaults.", "error");
+      return;
+    }
+    try {
+      const defaults = await fetchChannelDefaults(suggestion.channelId, true);
+      await api("PUT", "/api/channels/" + suggestion.channelId + "/defaults",
+        Object.assign({}, defaults || {}, { cadenceDays: days }));
+      state.channelDefaults.delete(String(suggestion.channelId));
+      showToast("Default cadence for " + (suggestionChannelName(suggestion) || "channel") + " set to " + days + " day(s)", "ok");
+    } catch (err) {
+      showErrorToast(err, "suggestions");
+    }
+    return;
+  }
+  if (act === "thumbs") {
+    openThumbnailReview(suggestion);
+  }
+}
+
+// Thumbnail/title pairing check (item 106): titles that promise a
+// part number, paired with the actual thumbnails for a visual check.
+async function openThumbnailReview(suggestion) {
+  const ids = (suggestion.videoIds || []).slice(0, 20);
+  if (ids.length === 0) return;
+  const videos = [];
+  for (const id of ids) {
+    try { videos.push(await api("GET", "/api/videos/" + id)); } catch (err) { /* skip missing */ }
+  }
+  const overlay = document.createElement("div");
+  overlay.className = "overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", "Thumbnail pairing check");
+  overlay.innerHTML = "<div class=\"overlay-card thumb-review-card\">" +
+    "<div class=\"card-head\"><h2>Check the thumbnails</h2>" +
+    "<button class=\"thumb-review-close\" aria-label=\"Close thumbnail check\">✕</button></div>" +
+    "<p class=\"muted-text\">These titles promise a part number. Check each thumbnail actually shows the same number — a mismatch confuses viewers picking the next part.</p>" +
+    (videos.map((video) =>
+      "<div class=\"thumb-review-row\">" + thumbnailHTML(video) + "<span>" + escapeHTML(video.title || "") + "</span></div>").join("") ||
+      "<p class=\"muted-text\">Those videos could not be loaded.</p>") +
+    "</div>";
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".thumb-review-close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+}
+
+el("inbox-list").addEventListener("click", (event) => {
+  const dismiss = event.target.closest("[data-sugg-dismiss]");
+  if (dismiss) { setSuggestionState(dismiss.dataset.suggDismiss, "dismiss"); return; }
+  const snooze = event.target.closest("[data-sugg-snooze]");
+  if (snooze) { setSuggestionState(snooze.dataset.suggSnooze, "snooze", 7); return; }
+  const reset = event.target.closest("[data-sugg-reset]");
+  if (reset) { setSuggestionState(reset.dataset.suggReset, "reset"); return; }
+  const action = event.target.closest("[data-sugg-act]");
+  if (action) {
+    const suggestion = (state.inbox || [])[Number(action.dataset.suggIndex)];
+    if (suggestion) runSuggestionAction(action.dataset.suggAct, suggestion);
+  }
+});
+
+// ---------------------------------------------------------- series
+// Series list + rename wizard (item 107).
+async function loadSeriesData() {
+  const data = await api("GET", "/api/series");
+  state.series = Array.isArray(data) ? data : (data.series || []);
+  return state.series;
+}
+
+async function loadSeries() {
+  const box = el("series-list");
+  if (!box) return;
+  try {
+    await loadSeriesData();
+    renderSeries();
+  } catch (err) {
+    box.innerHTML = "<p class=\"muted-text\">Series could not be loaded.</p>";
+  }
+}
+
+function renderSeries() {
+  const box = el("series-list");
+  if (!state.series || state.series.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">No series detected yet — a series appears once two or more videos share a title pattern (for example “Show EP1”, “Show EP2”).</p>";
+    return;
+  }
+  box.innerHTML = state.series.map((series, index) =>
+    "<div class=\"series-row\"><div class=\"series-main\"><strong>" + escapeHTML(series.seriesKey) + "</strong>" +
+    " <span class=\"pill\">" + series.count + " videos</span>" +
+    (series.grouped ? " <span class=\"pill\">grouped</span>" : "") +
+    " <span class=\"muted-text\">· " + escapeHTML(channelTitle(series.channelId) || ("channel " + series.channelId)) + "</span>" +
+    (series.sample && series.sample.length
+      ? "<div class=\"muted-text\">e.g. " + series.sample.map((title) => escapeHTML(title)).join(" · ") + "</div>" : "") +
+    "</div><button data-series-wizard=\"" + index + "\" data-write>Rename series</button></div>").join("");
+}
+
+el("series-list").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-series-wizard]");
+  if (button) openSeriesWizard(Number(button.dataset.seriesWizard));
+});
+
+function openSeriesWizard(index) {
+  const series = (state.series || [])[index];
+  if (!series) return;
+  state.wizard = { series, changeIds: null };
+  const panel = el("series-wizard");
+  panel.classList.remove("hidden");
+  panel.innerHTML =
+    "<h3>Rename series: " + escapeHTML(series.seriesKey) + "</h3>" +
+    "<p class=\"muted-text\">" + series.count + " videos on " +
+    escapeHTML(channelTitle(series.channelId) || ("channel " + series.channelId)) +
+    ". The plan builder substitutes {title} and {n} only — any other token (like {episode} or {part}) stays literal in the new titles, so check the preview before applying.</p>" +
+    "<label>New title template <input id=\"wizard-template\" type=\"text\"></label>" +
+    "<div class=\"row\">" +
+    "<button id=\"wizard-build-btn\" class=\"primary\" data-write>1. Build preview</button>" +
+    "<button id=\"wizard-apply-btn\" data-write disabled>2. Apply rename</button>" +
+    "<button id=\"wizard-close-btn\">Close</button></div>" +
+    "<div class=\"status-line\" id=\"wizard-status\"></div>" +
+    "<div id=\"wizard-preview\"></div>";
+  const input = el("wizard-template");
+  input.value = series.seriesKey + " EP{episode} Part {part}";
+  fetchChannelDefaults(series.channelId).then((defaults) => {
+    if (defaults && defaults.renameTemplate && state.wizard && state.wizard.series === series) {
+      input.value = defaults.renameTemplate;
+    }
+  });
+  el("wizard-close-btn").addEventListener("click", () => {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    state.wizard = null;
+  });
+  el("wizard-build-btn").addEventListener("click", buildSeriesPreview);
+  el("wizard-apply-btn").addEventListener("click", applySeriesRename);
+  panel.scrollIntoView({ block: "nearest" });
+}
+
+async function buildSeriesPreview() {
+  const wiz = state.wizard;
+  if (!wiz) return;
+  const series = wiz.series;
+  const template = el("wizard-template").value;
+  setStatus("wizard-status", "Building the plan for this series...");
+  // Reuse the bulk-edit machinery: scope Videos to the series'
+  // channel, put the template in the bulk bar, build the plan,
+  // then narrow to exactly this series' videos.
+  el("bulk-template").value = template;
+  el("bulk-regex").value = "";
+  el("bulk-replacement").value = "";
+  el("bulk-desc-template").value = "";
+  el("bulk-start").value = "1";
+  updateBulkPreview();
+  el("video-q").value = "";
+  el("video-channel").value = String(series.channelId);
+  setVisibility("", false);
+  setToggleChips(false, false, false);
+  state.videosLoaded = false;
+  await loadVideos();
+  const built = await buildBulkPlan();
+  if (!built || !state.bulkPlan) {
+    setStatus("wizard-status", "The plan could not be built — see Videos for the error.", "error");
+    return;
+  }
+  const seriesIds = new Set((series.videoIds || []).map(Number));
+  const changes = (state.bulkPlan.changes || []).filter((change) => seriesIds.has(change.videoId));
+  wiz.changeIds = changes.map((change) => change.videoId);
+  el("wizard-preview").innerHTML = changes.length
+    ? "<p><strong>" + changes.length + " of " + series.count + "</strong> videos in this series would change:</p>" +
+      changes.slice(0, 10).map((change) =>
+        "<div class=\"preview-line\">" + escapeHTML(change.oldTitle) +
+        " <span class=\"move-arrow\">→</span> <strong>" + escapeHTML(change.newTitle) + "</strong></div>").join("") +
+      (changes.length > 10 ? "<p class=\"muted-text\">…and " + (changes.length - 10) + " more — the full list is in the Videos plan.</p>" : "")
+    : "<p class=\"muted-text\">No videos in this series would change with that template.</p>";
+  el("wizard-apply-btn").disabled = changes.length === 0;
+  setStatus("wizard-status", changes.length ? "Preview ready — review it, then apply." : "", changes.length ? "ok" : "");
+}
+
+async function applySeriesRename() {
+  const wiz = state.wizard;
+  if (!wiz || !wiz.changeIds || wiz.changeIds.length === 0) return;
+  const series = wiz.series;
+  const template = el("wizard-template").value;
+  const ids = wiz.changeIds.slice();
+  state.planIncluded = new Set(ids);
+  renderBulkPlan();
+  // Remember the scheme (item 107): it becomes the channel's
+  // default rename template and a reusable recipe.
+  try {
+    const defaults = await fetchChannelDefaults(series.channelId, true);
+    await api("PUT", "/api/channels/" + series.channelId + "/defaults",
+      Object.assign({}, defaults || {}, { renameTemplate: template }));
+    state.channelDefaults.delete(String(series.channelId));
+  } catch (err) { /* saving the default must not block the rename */ }
+  try {
+    state.recipes = await api("POST", "/api/rename-recipes", {
+      name: series.seriesKey, template, regex: "", replacement: "",
+      descriptionTemplate: "", startIndex: 1,
+    });
+    renderRecipes("");
+  } catch (err) { /* the recipe is a convenience, not a blocker */ }
+  showToast("Series scheme saved as the channel default and as a recipe", "ok");
+  navigate("videos");
+  el("bulk-plan").scrollIntoView({ block: "nearest" });
+  await applyWithPreflight(ids, "Applying series rename");
+}
+
+// ------------------------------------------------------- automation
+function loadAutomation() {
+  loadProposals();
+  renderAutoSyncCard();
+  loadRules();
+}
+
+// Approval queue (item 116).
+async function loadProposals() {
+  try {
+    const data = await api("GET", "/api/proposals");
+    state.proposals = Array.isArray(data) ? data : (data.proposals || []);
+    renderProposals();
+  } catch (err) {
+    setStatus("proposals-status", friendlyError(err), "error");
+  }
+}
+
+function renderProposals() {
+  const box = el("proposals-list");
+  const items = (state.proposals || []).slice().sort((a, b) =>
+    (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1));
+  const pending = items.filter((item) => item.status === "pending").length;
+  setBadge("badge-proposals", pending);
+  el("proposals-approve-all").disabled = pending === 0;
+  if (items.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">No proposals yet. Rules in propose mode will queue their actions here.</p>";
+    return;
+  }
+  box.innerHTML = items.map((proposal) =>
+    "<div class=\"proposal" + (proposal.status !== "pending" ? " is-done" : "") + "\">" +
+    "<div class=\"proposal-head\"><strong>" + escapeHTML(proposal.ruleName || "Rule") + "</strong>" +
+    " <span class=\"pill\">" + escapeHTML(proposal.status || "") + "</span>" +
+    "<span class=\"muted-text\">" + (proposal.createdAt ? escapeHTML(relativeTime(proposal.createdAt)) : "") +
+    " · " + (proposal.actions || []).length + " action(s)</span></div>" +
+    "<ul class=\"proposal-actions\">" + (proposal.actions || []).map((action) =>
+      "<li><span class=\"pill\">" + escapeHTML(action.type || "") + "</span> " +
+      escapeHTML(action.videoTitle || ("Video " + action.videoId)) +
+      (action.detail ? " — " + escapeHTML(action.detail) : "") + "</li>").join("") + "</ul>" +
+    (proposal.results && proposal.results.length
+      ? "<div class=\"muted-text\">Result: " + proposal.results.map((line) => escapeHTML(line)).join("; ") + "</div>" : "") +
+    (proposal.status === "pending"
+      ? "<div class=\"row\"><button class=\"primary\" data-proposal-approve=\"" + escapeHTML(proposal.id) + "\" data-write>Approve &amp; run</button>" +
+        "<button data-proposal-reject=\"" + escapeHTML(proposal.id) + "\" data-write>Reject</button></div>" : "") +
+    "</div>").join("");
+}
+
+async function decideProposal(id, decision) {
+  try {
+    await api("POST", "/api/proposals/" + encodeURIComponent(id) + "/" + decision);
+    showToast(decision === "approve" ? "Proposal approved and run" : "Proposal rejected", "ok");
+    await loadProposals();
+  } catch (err) {
+    showErrorToast(err, "automation");
+  }
+}
+
+el("proposals-list").addEventListener("click", (event) => {
+  const approve = event.target.closest("[data-proposal-approve]");
+  if (approve) { decideProposal(approve.dataset.proposalApprove, "approve"); return; }
+  const reject = event.target.closest("[data-proposal-reject]");
+  if (reject) decideProposal(reject.dataset.proposalReject, "reject");
+});
+
+el("proposals-approve-all").addEventListener("click", async () => {
+  try {
+    await api("POST", "/api/proposals/approve-all");
+    showToast("All pending proposals approved and run", "ok");
+    await loadProposals();
+  } catch (err) {
+    showErrorToast(err, "automation");
+  }
+});
+
+// Auto-sync (item 111).
+function futureRelative(iso) {
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return "";
+  const diff = then - Date.now();
+  if (diff <= 60000) return "within a minute";
+  const minutes = Math.round(diff / 60000);
+  if (minutes < 60) return "in " + minutes + " min";
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return "in " + hours + (hours === 1 ? " hour" : " hours");
+  const days = Math.round(hours / 24);
+  return "in " + days + (days === 1 ? " day" : " days");
+}
+
+function renderAutoSyncCard() {
+  const body = el("autosync-body");
+  const toggle = el("autosync-toggle");
+  if (!body || !toggle) return;
+  const auto = state.status && state.status.autoSync;
+  if (!auto) {
+    body.innerHTML = "<p class=\"muted-text\">Auto-sync status is unavailable — reload the page.</p>";
+    toggle.disabled = true;
+    return;
+  }
+  toggle.disabled = false;
+  toggle.textContent = auto.paused ? "Resume auto-sync" : "Pause auto-sync";
+  if (auto.enabled === false && !auto.nextRunAt) {
+    body.innerHTML = "<p>No account has an auto-sync interval yet, so nothing is scheduled. Set one per account under Settings → Per-account overrides.</p>";
+    return;
+  }
+  body.innerHTML = "<p>" + (auto.paused ? "<strong>Paused.</strong> " : "<strong>Running.</strong> ") +
+    (auto.nextRunAt
+      ? "Next run " + futureRelative(auto.nextRunAt) + " (" + escapeHTML(auto.nextRunAt) + ")."
+      : "The next run time is not known yet.") + "</p>";
+}
+
+el("autosync-toggle").addEventListener("click", async () => {
+  const auto = (state.status && state.status.autoSync) || {};
+  try {
+    const data = await api("POST", "/api/autosync/pause", { paused: !auto.paused });
+    if (!state.status) state.status = {};
+    state.status.autoSync = data;
+    renderAutoSyncCard();
+    showToast(data.paused ? "Auto-sync paused" : "Auto-sync resumed", "ok");
+  } catch (err) {
+    showErrorToast(err, "automation");
+  }
+});
+
+// Rules engine (items 112, 113).
+function ruleFromForm() {
+  const type = el("rule-action-type").value;
+  const match = {
+    query: el("rule-match-query").value.trim(),
+    visibility: el("rule-match-visibility").value,
+  };
+  if (el("rule-match-channel").value) match.channelId = Number(el("rule-match-channel").value);
+  const action = { type };
+  if (type === "rename") action.template = el("rule-action-template").value;
+  if (type === "comment") action.text = el("rule-action-text").value;
+  if (type === "playlist") action.playlistId = Number(el("rule-action-playlist").value || 0);
+  return {
+    id: el("rule-id").value || "",
+    name: el("rule-name").value.trim(),
+    enabled: el("rule-enabled").checked,
+    mode: el("rule-mode").value,
+    match,
+    action,
+  };
+}
+
+function ruleActionSummary(rule) {
+  const action = rule.action || {};
+  if (action.type === "rename") return "rename → “" + (action.template || "") + "”";
+  if (action.type === "comment") return "post first comment";
+  if (action.type === "playlist") return "add to playlist #" + (action.playlistId || "");
+  return action.type || "";
+}
+
+function ruleMatchSummary(rule) {
+  const match = rule.match || {};
+  const parts = [];
+  parts.push(match.channelId ? (channelTitle(match.channelId) || ("channel " + match.channelId)) : "any channel");
+  if (match.query) parts.push("title contains “" + match.query + "”");
+  if (match.visibility) parts.push(match.visibility);
+  return parts.join(" · ");
+}
+
+async function loadRules() {
+  try {
+    const data = await api("GET", "/api/rules");
+    state.rules = Array.isArray(data) ? data : (data.rules || []);
+    renderRules();
+  } catch (err) {
+    el("rules-list").innerHTML = "<p class=\"muted-text\">Rules could not be loaded.</p>";
+  }
+  loadRulePlaylists();
+}
+
+function renderRules() {
+  const box = el("rules-list");
+  if (!state.rules || state.rules.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">No rules yet — create the first one below.</p>";
+    return;
+  }
+  box.innerHTML = state.rules.map((rule, index) =>
+    "<div class=\"rule-row\"><div class=\"rule-main\"><strong>" + escapeHTML(rule.name || "Untitled rule") + "</strong>" +
+    " <span class=\"pill\">" + (rule.enabled ? "enabled" : "disabled") + "</span>" +
+    " <span class=\"pill\">" + escapeHTML(rule.mode || "propose") + "</span>" +
+    "<div class=\"muted-text\">When: " + escapeHTML(ruleMatchSummary(rule)) + "</div>" +
+    "<div class=\"muted-text\">Then: " + escapeHTML(ruleActionSummary(rule)) + "</div></div>" +
+    "<div class=\"row\"><button data-rule-edit=\"" + index + "\">Edit</button>" +
+    "<button data-rule-delete=\"" + escapeHTML(rule.id) + "\" data-write>Delete</button></div></div>").join("");
+}
+
+async function loadRulePlaylists() {
+  const select = el("rule-action-playlist");
+  const channels = (state.status && state.status.channels) || [];
+  const seen = new Map();
+  for (const channel of channels) {
+    try {
+      const playlists = await api("GET", "/api/playlists?channel=" + encodeURIComponent(channel.id));
+      (playlists || []).forEach((playlist) => {
+        if (!seen.has(playlist.id)) seen.set(playlist.id, playlist.title + " (" + channel.title + ")");
+      });
+    } catch (err) { /* a channel without playlists is fine */ }
+  }
+  const current = select.value;
+  select.innerHTML = "<option value=\"\">Choose a playlist…</option>" + Array.from(seen.entries()).map(([id, label]) =>
+    "<option value=\"" + id + "\">" + escapeHTML(label) + "</option>").join("");
+  if (current) select.value = current;
+}
+
+function updateRuleActionRows() {
+  const type = el("rule-action-type").value;
+  el("rule-action-template-row").classList.toggle("hidden", type !== "rename");
+  el("rule-action-text-row").classList.toggle("hidden", type !== "comment");
+  el("rule-action-playlist-row").classList.toggle("hidden", type !== "playlist");
+}
+
+el("rule-action-type").addEventListener("change", updateRuleActionRows);
+el("rule-match-channel").addEventListener("change", loadRulePlaylists);
+
+function resetRuleForm() {
+  el("rule-id").value = "";
+  el("rule-name").value = "";
+  el("rule-enabled").checked = true;
+  el("rule-mode").value = "propose";
+  el("rule-match-channel").value = "";
+  el("rule-match-query").value = "";
+  el("rule-match-visibility").value = "";
+  el("rule-action-type").value = "rename";
+  el("rule-action-template").value = "";
+  el("rule-action-text").value = "";
+  el("rule-action-playlist").value = "";
+  el("rule-form-title").textContent = "New rule";
+  el("rule-dry-run-result").classList.add("hidden");
+  el("rule-dry-run-result").innerHTML = "";
+  setStatus("rule-status", "");
+  updateRuleActionRows();
+}
+
+el("rule-reset-btn").addEventListener("click", resetRuleForm);
+
+function fillRuleForm(rule) {
+  el("rule-id").value = rule.id || "";
+  el("rule-name").value = rule.name || "";
+  el("rule-enabled").checked = !!rule.enabled;
+  el("rule-mode").value = rule.mode || "propose";
+  const match = rule.match || {};
+  el("rule-match-channel").value = match.channelId ? String(match.channelId) : "";
+  el("rule-match-query").value = match.query || "";
+  el("rule-match-visibility").value = match.visibility || "";
+  const action = rule.action || {};
+  el("rule-action-type").value = action.type || "rename";
+  el("rule-action-template").value = action.template || "";
+  el("rule-action-text").value = action.text || "";
+  updateRuleActionRows();
+  if (action.playlistId) {
+    loadRulePlaylists().then(() => { el("rule-action-playlist").value = String(action.playlistId); });
+  }
+  el("rule-form-title").textContent = "Edit rule: " + (rule.name || "");
+  el("rule-form").scrollIntoView({ block: "nearest" });
+}
+
+el("rules-list").addEventListener("click", async (event) => {
+  const edit = event.target.closest("[data-rule-edit]");
+  if (edit) { fillRuleForm(state.rules[Number(edit.dataset.ruleEdit)]); return; }
+  const del = event.target.closest("[data-rule-delete]");
+  if (del) {
+    if (!window.confirm("Delete this rule? Its past activity stays in History.")) return;
+    try {
+      await api("DELETE", "/api/rules/" + encodeURIComponent(del.dataset.ruleDelete));
+      showToast("Rule deleted", "ok");
+      await loadRules();
+    } catch (err) {
+      showErrorToast(err, "automation");
+    }
+  }
+});
+
+el("rule-dry-run-btn").addEventListener("click", async () => {
+  const rule = ruleFromForm();
+  setStatus("rule-status", "Dry-running against your library...");
+  try {
+    const data = await api("POST", "/api/rules/dry-run", { rule });
+    const box = el("rule-dry-run-result");
+    box.classList.remove("hidden");
+    const actions = data.actions || [];
+    box.innerHTML = "<div class=\"preview-label\">Dry run — nothing was changed</div>" +
+      "<p>" + (data.matched || 0) + " video(s) match, " + (data.alreadyProcessed || 0) +
+      " already processed by this rule, " + actions.length + " action(s) would run:</p>" +
+      (actions.length
+        ? "<ul class=\"proposal-actions\">" + actions.map((action) =>
+          "<li><span class=\"pill\">" + escapeHTML(action.type || "") + "</span> " +
+          escapeHTML(action.videoTitle || ("Video " + action.videoId)) +
+          (action.detail ? " — " + escapeHTML(action.detail) : "") + "</li>").join("") + "</ul>"
+        : "<p class=\"muted-text\">No actions would run right now.</p>");
+    setStatus("rule-status", "Dry run complete", "ok");
+  } catch (err) {
+    setStatus("rule-status", friendlyError(err), "error");
+    showErrorToast(err, "automation");
+  }
+});
+
+el("rule-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const rule = ruleFromForm();
+  if (!rule.name) { setStatus("rule-status", "Give the rule a name first.", "error"); return; }
+  setStatus("rule-status", "Saving rule...");
+  try {
+    await api("POST", "/api/rules", rule);
+    showToast("Rule “" + rule.name + "” saved", "ok");
+    resetRuleForm();
+    await loadRules();
+  } catch (err) {
+    setStatus("rule-status", friendlyError(err), "error");
+    showErrorToast(err, "automation");
+  }
+});
+
+// ---------------------------------------------------- comment centre
+// One screen for first comments across channels (items 121-125).
+async function loadCommentCentre() {
+  setStatus("cc-status", "Loading...");
+  try {
+    const data = await api("GET", "/api/comment-centre");
+    state.commentCentre = Array.isArray(data) ? data : (data.rows || data.items || []);
+    renderCommentCentre();
+    const pending = state.commentCentre.filter((row) => row.status === "pending").length;
+    const needsPin = state.commentCentre.filter((row) => row.needsPin).length;
+    setStatus("cc-status", state.commentCentre.length + " video(s) · " + pending + " pending · " + needsPin + " need pinning", "ok");
+  } catch (err) {
+    setStatus("cc-status", friendlyError(err), "error");
+    showErrorToast(err, "commentcentre");
+  }
+}
+
+el("cc-load-btn").addEventListener("click", loadCommentCentre);
+
+el("cc-filter-chips").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-cc-filter]");
+  if (!chip) return;
+  state.ccFilter = chip.dataset.ccFilter;
+  document.querySelectorAll("#cc-filter-chips .chip").forEach((item) =>
+    item.classList.toggle("is-active", item === chip));
+  renderCommentCentre();
+});
+
+function ccRowVisible(row) {
+  if (state.ccFilter === "posted") return row.status === "posted";
+  if (state.ccFilter === "pending") return row.status === "pending";
+  if (state.ccFilter === "needspin") return !!row.needsPin;
+  return true;
+}
+
+function renderCommentCentre() {
+  const box = el("cc-list");
+  const rows = (state.commentCentre || []).filter(ccRowVisible);
+  if (rows.length === 0) {
+    box.innerHTML = "<div class=\"empty-state\"><span class=\"state-art\" aria-hidden=\"true\">❝</span><h3>Nothing here</h3>" +
+      "<p>No videos match this filter. Sync a channel to mirror its videos, then post and track first comments here.</p></div>";
+    return;
+  }
+  box.innerHTML = rows.map((row) => {
+    const comment = row.comment || null;
+    const statusPill = row.status === "posted" ? "<span class=\"pill\">posted</span>"
+      : row.status === "pending" ? "<span class=\"pill cc-pending\">pending</span>"
+      : "<span class=\"pill\">draft</span>";
+    const pinState = comment
+      ? (row.needsPin ? "<span class=\"warn-badge\">needs pin</span>" : "<span class=\"result-ok\">pinned ✓</span>")
+      : "<span class=\"muted-text\">—</span>";
+    let actions = "";
+    if (comment) {
+      actions += "<a class=\"btn-link\" href=\"https://www.youtube.com/watch?v=" + encodeURIComponent(row.ytVideoId || "") +
+        "\" target=\"_blank\" rel=\"noopener\">Open in YouTube</a>";
+      if (row.needsPin) {
+        actions += "<button data-cc-pin=\"" + comment.id + "\" data-cc-pinned=\"true\" data-write>Mark pinned</button>";
+      } else {
+        actions += "<button data-cc-pin=\"" + comment.id + "\" data-cc-pinned=\"false\" data-write>Unmark pin</button>";
+      }
+      actions += "<button data-cc-history-toggle=\"" + comment.id + "\">History &amp; edit</button>";
+    } else if (row.status === "pending") {
+      actions += "<button class=\"primary\" data-cc-post-open=\"" + row.videoId + "\" data-write>Post first comment</button>";
+    }
+    const commentText = comment
+      ? escapeHTML(String(comment.text || "").slice(0, 140)) + (String(comment.text || "").length > 140 ? "…" : "")
+      : "<span class=\"muted-text\">No first comment yet</span>";
+    let html = "<div class=\"cc-row\">" +
+      "<div class=\"cc-video\">" + thumbnailHTML(row) + "<span><strong>" + escapeHTML(row.title || "") + "</strong>" +
+      "<span class=\"muted-text\"> · " + escapeHTML(channelTitle(row.channelId) || ("channel " + row.channelId)) + "</span></span></div>" +
+      "<div class=\"cc-status\">" + statusPill + "</div>" +
+      "<div class=\"cc-comment\">" + commentText + "</div>" +
+      "<div class=\"cc-pin\">" + pinState + "</div>" +
+      "<div class=\"cc-actions row\">" + actions + "</div>";
+    if (!comment && row.status === "pending") {
+      html += "<div class=\"cc-editor hidden\" id=\"cc-editor-" + row.videoId + "\">" +
+        "<label>First comment for this video <textarea id=\"cc-text-" + row.videoId + "\" rows=\"3\"></textarea></label>" +
+        "<p class=\"muted-text\">Template tokens: {title} {episode} {series} {channel}. Preview renders the template for this video; posting sends the rendered text.</p>" +
+        "<div class=\"row\"><button data-cc-preview=\"" + row.videoId + "\">Preview</button>" +
+        "<button class=\"primary\" data-cc-send=\"" + row.videoId + "\" data-write>Post comment</button></div>" +
+        "<div class=\"cc-preview hidden\" id=\"cc-preview-" + row.videoId + "\"></div></div>";
+    }
+    if (comment) {
+      html += "<div class=\"cc-history hidden\" id=\"cc-history-" + comment.id + "\"><p class=\"muted-text\">Loading history…</p></div>";
+    }
+    return html + "</div>";
+  }).join("");
+}
+
+async function openCommentEditor(videoId) {
+  const editor = el("cc-editor-" + videoId);
+  if (!editor) return;
+  editor.classList.remove("hidden");
+  const area = el("cc-text-" + videoId);
+  const row = (state.commentCentre || []).find((item) => String(item.videoId) === String(videoId));
+  if (area && !area.value && row) {
+    const defaults = await fetchChannelDefaults(row.channelId);
+    if (defaults && defaults.commentTemplate && !area.value) {
+      area.value = defaults.commentTemplate;
+    }
+  }
+  if (area) area.focus();
+}
+
+async function toggleCommentHistory(commentId) {
+  const box = el("cc-history-" + commentId);
+  if (!box) return;
+  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  box.innerHTML = "<p class=\"muted-text\">Loading history…</p>";
+  const row = (state.commentCentre || []).find((item) => item.comment && String(item.comment.id) === String(commentId));
+  const current = row && row.comment ? row.comment.text || "" : "";
+  try {
+    const history = await api("GET", "/api/comments/" + commentId + "/history");
+    const entries = Array.isArray(history) ? history : (history.entries || []);
+    box.innerHTML =
+      "<div class=\"preview-label\">Edit the current comment</div>" +
+      "<label>Current text <textarea id=\"cc-edit-text-" + commentId + "\" rows=\"3\">" + escapeHTML(current) + "</textarea></label>" +
+      "<div class=\"row\"><button class=\"primary\" data-cc-edit-save=\"" + commentId + "\" data-write>Save edit</button></div>" +
+      "<div class=\"preview-label\">Prior versions</div>" +
+      (entries.length
+        ? entries.map((entry) =>
+          "<div class=\"cc-version\"><span class=\"cc-version-text\">" + escapeHTML(entry.oldText || "") + "</span>" +
+          "<span class=\"muted-text\">" + (entry.createdAt ? escapeHTML(relativeTime(entry.createdAt)) : "") + "</span>" +
+          "<button data-cc-restore=\"" + commentId + "\" data-cc-history-id=\"" + entry.id + "\" data-write>Restore</button></div>").join("")
+        : "<p class=\"muted-text\">No prior versions — edits you make are recorded here.</p>");
+  } catch (err) {
+    box.innerHTML = "<p class=\"muted-text\">History could not be loaded.</p>";
+  }
+}
+
+el("cc-list").addEventListener("click", async (event) => {
+  const pin = event.target.closest("[data-cc-pin]");
+  if (pin) {
+    try {
+      await api("POST", "/api/comments/" + pin.dataset.ccPin + "/pin", { pinned: pin.dataset.ccPinned === "true" });
+      showToast(pin.dataset.ccPinned === "true" ? "Marked as pinned" : "Pin mark removed", "ok");
+      await loadCommentCentre();
+    } catch (err) { showErrorToast(err, "commentcentre"); }
+    return;
+  }
+  const open = event.target.closest("[data-cc-post-open]");
+  if (open) { openCommentEditor(open.dataset.ccPostOpen); return; }
+  const preview = event.target.closest("[data-cc-preview]");
+  if (preview) {
+    const videoId = preview.dataset.ccPreview;
+    const row = (state.commentCentre || []).find((item) => String(item.videoId) === String(videoId));
+    const area = el("cc-text-" + videoId);
+    const box = el("cc-preview-" + videoId);
+    if (!row || !area || !box) return;
+    try {
+      const results = await api("POST", "/api/comments/preview", { channelId: row.channelId, template: area.value });
+      const mine = (Array.isArray(results) ? results : []).find((item) => String(item.videoId) === String(videoId));
+      if (mine) {
+        state.ccRendered[videoId] = { template: area.value, text: mine.text };
+        box.innerHTML = "<div class=\"preview-label\">Preview — this exact text will be posted</div><p>" + escapeHTML(mine.text) + "</p>";
+      } else {
+        box.innerHTML = "<p class=\"muted-text\">The preview did not include this video — the raw text will be posted as-is.</p>";
+        delete state.ccRendered[videoId];
+      }
+      box.classList.remove("hidden");
+    } catch (err) { showErrorToast(err, "commentcentre"); }
+    return;
+  }
+  const send = event.target.closest("[data-cc-send]");
+  if (send) {
+    const videoId = send.dataset.ccSend;
+    const area = el("cc-text-" + videoId);
+    if (!area || !area.value.trim()) { showToast("Write the comment first (or load the channel template).", "error"); return; }
+    const rendered = state.ccRendered[videoId];
+    const text = rendered && rendered.template === area.value ? rendered.text : area.value;
+    send.disabled = true;
+    try {
+      await api("POST", "/api/videos/" + videoId + "/first-comment", { text });
+      showToast("First comment posted", "ok");
+      delete state.ccRendered[videoId];
+      await loadCommentCentre();
+      loadStatus();
+    } catch (err) {
+      showErrorToast(err, "commentcentre");
+      send.disabled = false;
+    }
+    return;
+  }
+  const historyToggle = event.target.closest("[data-cc-history-toggle]");
+  if (historyToggle) { toggleCommentHistory(historyToggle.dataset.ccHistoryToggle); return; }
+  const editSave = event.target.closest("[data-cc-edit-save]");
+  if (editSave) {
+    const commentId = editSave.dataset.ccEditSave;
+    const area = el("cc-edit-text-" + commentId);
+    if (!area) return;
+    try {
+      await api("PATCH", "/api/comments/" + commentId, { text: area.value });
+      showToast("Comment updated — the old text is in its history", "ok");
+      await loadCommentCentre();
+    } catch (err) { showErrorToast(err, "commentcentre"); }
+    return;
+  }
+  const restore = event.target.closest("[data-cc-restore]");
+  if (restore) {
+    try {
+      await api("POST", "/api/comments/" + restore.dataset.ccRestore + "/restore",
+        { historyId: Number(restore.dataset.ccHistoryId) });
+      showToast("Comment restored to that version", "ok");
+      await loadCommentCentre();
+    } catch (err) { showErrorToast(err, "commentcentre"); }
+  }
+});
+
+// ------------------------------------------- channel defaults card
+el("cd-channel").addEventListener("change", loadChannelDefaultsCard);
+
+async function loadChannelDefaultsCard() {
+  const channelId = el("cd-channel").value;
+  const fields = el("cd-fields");
+  if (!channelId) { fields.classList.add("hidden"); return; }
+  fields.classList.remove("hidden");
+  setStatus("cd-status", "Loading…");
+  const defaults = (await fetchChannelDefaults(channelId, true)) || normalizeDefaults(null);
+  el("cd-rename-template").value = defaults.renameTemplate;
+  el("cd-cadence").value = defaults.cadenceDays || "";
+  el("cd-comment-template").value = defaults.commentTemplate;
+  el("cd-pipeline-comment").checked = defaults.pipelineComment;
+  el("cd-pipeline-email").checked = defaults.pipelineEmail;
+  try {
+    const playlists = await api("GET", "/api/playlists?channel=" + encodeURIComponent(channelId));
+    el("cd-pipeline-playlist").innerHTML = "<option value=\"0\">None</option>" + (playlists || []).map((playlist) =>
+      "<option value=\"" + playlist.id + "\">" + escapeHTML(playlist.title) + "</option>").join("");
+    el("cd-pipeline-playlist").value = String(defaults.pipelinePlaylistId || 0);
+  } catch (err) {
+    el("cd-pipeline-playlist").innerHTML = "<option value=\"0\">None</option>";
+  }
+  let series = (state.series || []).filter((item) => String(item.channelId) === String(channelId));
+  if (series.length === 0) {
+    try { series = (await loadSeriesData()).filter((item) => String(item.channelId) === String(channelId)); }
+    catch (err) { series = []; }
+  }
+  const watched = new Set((defaults.watchSeries || []).map(String));
+  el("cd-watch-series").innerHTML = series.length
+    ? series.map((item) =>
+      "<label class=\"check\"><input type=\"checkbox\" class=\"cd-watch\" value=\"" + escapeHTML(item.seriesKey) + "\"" +
+      (watched.has(String(item.seriesKey)) ? " checked" : "") + "> " + escapeHTML(item.seriesKey) +
+      " (" + item.count + " videos)</label>").join("")
+    : "<p class=\"muted-text\">No series detected on this channel yet.</p>";
+  setStatus("cd-status", "");
+}
+
+el("cd-save-btn").addEventListener("click", async () => {
+  const channelId = el("cd-channel").value;
+  if (!channelId) return;
+  const body = {
+    renameTemplate: el("cd-rename-template").value,
+    cadenceDays: Number(el("cd-cadence").value || 0),
+    commentTemplate: el("cd-comment-template").value,
+    pipelineComment: el("cd-pipeline-comment").checked,
+    pipelineEmail: el("cd-pipeline-email").checked,
+    pipelinePlaylistId: Number(el("cd-pipeline-playlist").value || 0),
+    watchSeries: Array.from(document.querySelectorAll(".cd-watch:checked")).map((box) => box.value),
+  };
+  setStatus("cd-status", "Saving…");
+  try {
+    await api("PUT", "/api/channels/" + channelId + "/defaults", body);
+    state.channelDefaults.set(String(channelId), normalizeDefaults(body));
+    setStatus("cd-status", "Channel defaults saved", "ok");
+    showToast("Channel defaults saved", "ok");
+  } catch (err) {
+    setStatus("cd-status", friendlyError(err), "error");
+    showErrorToast(err, "settings");
+  }
+});
+
+// Workflow bundles (item 118): rules + recipes + saved searches +
+// channel defaults as one shareable file.
+el("workflow-export-btn").addEventListener("click", async () => {
+  try {
+    const bundle = await api("GET", "/api/workflows/export");
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "yt-manage-workflow.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setStatus("settings-status", "Workflow exported (rules, recipes, saved searches, channel defaults).", "ok");
+    showToast("Workflow exported", "ok");
+  } catch (err) {
+    setStatus("settings-status", friendlyError(err), "error");
+    showErrorToast(err, "settings");
+  }
+});
+
+el("workflow-import-btn").addEventListener("click", () => el("workflow-import-file").click());
+
+el("workflow-import-file").addEventListener("change", async () => {
+  const file = el("workflow-import-file").files[0];
+  el("workflow-import-file").value = "";
+  if (!file) return;
+  let bundle;
+  try {
+    bundle = JSON.parse(await file.text());
+  } catch (err) {
+    setStatus("settings-status", "That file is not valid JSON — nothing was imported.", "error");
+    return;
+  }
+  if (!window.confirm("Import this workflow? It replaces your current rules, rename recipes and saved searches, and merges its channel defaults.")) return;
+  try {
+    await api("POST", "/api/workflows/import", bundle);
+    setStatus("settings-status", "Workflow imported.", "ok");
+    showToast("Workflow imported", "ok");
+    loadRecipes();
+    loadSavedSearches();
+    state.channelDefaults.clear();
+    if (el("cd-channel").value) loadChannelDefaultsCard();
+  } catch (err) {
+    setStatus("settings-status", friendlyError(err), "error");
+    showErrorToast(err, "settings");
+  }
+});
+
 // --------------------------------------------------------------- A/B tests
 async function loadABTests() {
   setStatus("ab-status", "Loading...");
@@ -2936,6 +4043,8 @@ async function loadSettings() {
     }
     state.settingsData = await api("GET", "/api/settings");
     renderSettings();
+    fillChannelSelects();
+    if (el("cd-channel").value) loadChannelDefaultsCard();
     setStatus("settings-status", "");
   } catch (err) {
     setStatus("settings-status", friendlyError(err), "error");
@@ -3339,8 +4448,11 @@ el("shortcuts-overlay").addEventListener("click", (event) => {
 
 const PALETTE_COMMANDS = [
   { label: "Go to Home", run: () => navigate("home") },
+  { label: "Go to Suggestions", run: () => navigate("suggestions") },
   { label: "Go to Videos", run: () => navigate("videos") },
   { label: "Go to Episodes", run: () => navigate("episodes") },
+  { label: "Go to Automation", run: () => navigate("automation") },
+  { label: "Go to Comment Centre", run: () => navigate("commentcentre") },
   { label: "Go to Playlists", run: () => navigate("playlists") },
   { label: "Go to Accounts", run: () => navigate("accounts") },
   { label: "Go to History", run: () => navigate("history") },

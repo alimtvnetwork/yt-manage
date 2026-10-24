@@ -74,6 +74,21 @@ func (Comment) TableName() string {
 	return "comments"
 }
 
+// CommentHistory is one prior version of a first comment's text in
+// content.db (spec 29, item 125): every edit records the text it
+// replaced so any version can be restored.
+type CommentHistory struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	CommentID uint      `gorm:"index" json:"comment_id"`
+	VideoID   uint      `gorm:"index" json:"video_id"`
+	OldText   string    `json:"old_text"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (CommentHistory) TableName() string {
+	return "comment_histories"
+}
+
 // TitleHistory is one recorded title change for a video in content.db.
 // It powers the per-video rename history (spec 29, item 38) and the
 // undo data for applied renames.

@@ -34,6 +34,8 @@ func runSearch(args []string) int {
 	if hasHelpFlag(args) {
 		return runGroupUsage(searchUsage)
 	}
+	wantJSON := hasJSONFlag(args)
+	args = stripJSONFlag(args)
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	channelID := fs.Uint("channel", 0, "local channel ID")
@@ -66,6 +68,9 @@ func runSearch(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yt-manage search: %v\n", err)
 		return 1
+	}
+	if wantJSON {
+		return printJSON(videos)
 	}
 	printVideoTable(os.Stdout, videos)
 	fmt.Fprintf(os.Stdout, "%d result(s) from the local mirror (0 API units)\n", len(videos))

@@ -85,6 +85,8 @@ func runVideoList(args []string) int {
 	if hasHelpFlag(args) {
 		return runGroupUsage(videoListUsage)
 	}
+	wantJSON := hasJSONFlag(args)
+	args = stripJSONFlag(args)
 	fs := flag.NewFlagSet("video list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	channelID := fs.Uint("channel", 0, "local channel ID")
@@ -114,6 +116,9 @@ func runVideoList(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yt-manage video list: %v\n", err)
 		return 1
+	}
+	if wantJSON {
+		return printJSON(videos)
 	}
 	printVideoTable(os.Stdout, videos)
 	return 0

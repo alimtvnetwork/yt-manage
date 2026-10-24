@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/alimtvnetwork/yt-manage/internal/batch"
+	"github.com/alimtvnetwork/yt-manage/internal/config"
 	"github.com/alimtvnetwork/yt-manage/internal/searchx"
 )
 
@@ -218,6 +219,9 @@ func (s *Server) handleBulkEdit(w http.ResponseWriter, r *http.Request) {
 	if applied > 0 {
 		s.recordActivity("rename", fmt.Sprintf("Renamed %d of %d videos", applied, len(stored.plan.Changes)), "")
 		s.addQuota(50 * applied)
+		if cfg, cfgErr := config.LoadSettings(s.home); cfgErr == nil {
+			s.fireWebhook(cfg, "bulk.applied", map[string]interface{}{"applied": applied, "total": len(stored.plan.Changes)})
+		}
 	}
 	writeOK(w, bulkEditResponse{
 		Applied: applied, Total: len(stored.plan.Changes), Results: results,

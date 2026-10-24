@@ -161,6 +161,8 @@ func runEpisodeList(args []string) int {
 	if hasHelpFlag(args) {
 		return runGroupUsage(episodeListUsage)
 	}
+	wantJSON := hasJSONFlag(args)
+	args = stripJSONFlag(args)
 	fs := flag.NewFlagSet("episode list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	channelID := fs.Uint("channel", 0, "local channel ID")
@@ -196,6 +198,9 @@ func runEpisodeList(args []string) int {
 			episode.Title,
 			strconv.Itoa(len(parts)),
 		})
+	}
+	if wantJSON {
+		return printJSON(episodeList)
 	}
 	printTable(os.Stdout, []string{"ID", "Key", "Number", "Title", "Parts"}, rows)
 	return 0

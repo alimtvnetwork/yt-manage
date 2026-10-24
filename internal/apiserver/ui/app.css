@@ -1000,6 +1000,97 @@ body:not(.density-dense) .btn-link { min-height: 40px; }
 .ro-banner code { background: var(--panel-2); }
 body.read-only [data-write] { opacity: 0.55; }
 
+/* Wave 5: suggestions inbox (items 101-110) */
+.type-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid var(--accent); font-size: 12px; font-weight: 600;
+  white-space: nowrap;
+}
+.suggestion-row {
+  display: flex; gap: 10px; align-items: center; padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.suggestion-row:first-child { border-top: none; }
+.suggestion-text { flex: 1; min-width: 0; }
+.suggestion-card.is-hidden-state { opacity: 0.65; }
+.suggestion-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.suggestion-card h3 { margin: 4px 0; }
+
+/* Wave 5: series list & rename wizard (item 107) */
+.series-row {
+  display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+.series-row:first-of-type { border-top: none; }
+.series-main { flex: 1; min-width: 0; }
+.wizard-panel {
+  margin-top: 12px; border: 1px dashed var(--accent); border-radius: 8px; padding: 12px;
+  background: var(--accent-soft);
+}
+.wizard-panel label { display: block; margin: 8px 0; }
+.wizard-panel input[type="text"] { width: 100%; }
+
+/* Wave 5: automation — proposals, rules (items 111-116) */
+.proposal { border-top: 1px solid var(--border); padding: 10px 0; }
+.proposal:first-of-type { border-top: none; }
+.proposal.is-done { opacity: 0.65; }
+.proposal-actions { list-style: none; margin: 6px 0; padding: 0; }
+.proposal-actions li { padding: 3px 0; }
+.rule-row {
+  display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+.rule-row:first-of-type { border-top: none; }
+.rule-main { flex: 1; min-width: 0; }
+.rule-group { border: 1px solid var(--border); border-radius: 8px; margin: 10px 0; padding: 10px 12px; }
+.rule-group legend { padding: 0 6px; font-weight: 600; }
+.rule-group label { display: block; margin: 6px 0; }
+#rule-form > label { display: block; margin: 6px 0; }
+#rule-form input[type="text"], #rule-form textarea, #rule-form select { width: 100%; }
+#rule-dry-run-result {
+  margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+}
+
+/* Wave 5: comment centre (items 121-125) */
+.cc-row {
+  display: grid; gap: 6px 12px; align-items: start;
+  grid-template-columns: minmax(220px, 2fr) 90px minmax(180px, 2fr) 90px;
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+.cc-row:first-of-type { border-top: none; }
+.cc-video { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.cc-comment { overflow-wrap: anywhere; }
+.cc-actions { grid-column: 1 / -1; }
+.cc-editor, .cc-history {
+  grid-column: 1 / -1; border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px;
+}
+.cc-editor textarea, .cc-history textarea { width: 100%; }
+.cc-preview { margin-top: 8px; }
+.cc-version {
+  display: flex; gap: 10px; align-items: center; padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.cc-version-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cc-pending { border-color: var(--warn-border); color: var(--warn-text); background: var(--warn-bg); }
+
+/* Wave 5: channel defaults card (items 108, 114, 115) */
+#channel-defaults-card label { display: block; margin: 8px 0; }
+#channel-defaults-card input[type="text"],
+#channel-defaults-card input[type="number"],
+#channel-defaults-card textarea,
+#channel-defaults-card select { width: 100%; }
+#channel-defaults-card label.check { display: flex; gap: 8px; align-items: center; }
+#channel-defaults-card label.check input { width: auto; }
+
+/* Wave 5: thumbnail pairing review (item 106) */
+.thumb-review-card { max-width: 640px; }
+.thumb-review-row { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
+
+@media (max-width: 860px) {
+  .cc-row { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 860px) {
   .sidebar { width: var(--sidebar-w-collapsed); flex-basis: var(--sidebar-w-collapsed); }
   .nav-label, .badge, .saved-searches, .brand { display: none; }

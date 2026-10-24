@@ -39,7 +39,7 @@ Spec file: 02-spec/21-app/29-user-experience-200-features/03-next-100-features.m
 Starts only after Set 1 closes (suggestions and automation build on
 preview/undo/settings).
 
-- [ ] Wave 5 (Subtask 05) — Items 101–125: pattern panel, suggestion
+- [x] Wave 5 (Subtask 05) — Items 101–125: pattern panel, suggestion
       inbox, rules engine, approval queue, post-publish pipeline,
       comment centre, pin checklist.
 - [ ] Wave 6 (Subtask 06) — Items 126–150: comment coverage, playlist

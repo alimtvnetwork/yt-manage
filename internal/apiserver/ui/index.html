@@ -23,8 +23,11 @@
     <div class="brand">yt-manage</div>
     <nav class="side-nav" id="side-nav">
       <button class="nav-item" data-section="home"><span class="nav-icon">⌂</span><span class="nav-label">Home</span></button>
+      <button class="nav-item" data-section="suggestions"><span class="nav-icon">✦</span><span class="nav-label">Suggestions</span><span class="badge" id="badge-suggestions"></span></button>
       <button class="nav-item" data-section="videos"><span class="nav-icon">▶</span><span class="nav-label">Videos</span><span class="badge" id="badge-videos"></span></button>
       <button class="nav-item" data-section="episodes"><span class="nav-icon">▦</span><span class="nav-label">Episodes</span><span class="badge" id="badge-episodes"></span></button>
+      <button class="nav-item" data-section="automation"><span class="nav-icon">⚡</span><span class="nav-label">Automation</span><span class="badge" id="badge-proposals"></span></button>
+      <button class="nav-item" data-section="commentcentre"><span class="nav-icon">❝</span><span class="nav-label">Comment Centre</span></button>
       <button class="nav-item" data-section="schedules"><span class="nav-icon">◷</span><span class="nav-label">Schedules</span><span class="badge" id="badge-schedules"></span></button>
       <button class="nav-item" data-section="playlists"><span class="nav-icon">☰</span><span class="nav-label">Playlists</span><span class="badge" id="badge-playlists"></span></button>
       <button class="nav-item" data-section="comments"><span class="nav-icon">✎</span><span class="nav-label">Comments</span><span class="badge" id="badge-comments"></span></button>
@@ -126,6 +129,14 @@
           <div id="recent-list"></div>
         </div>
 
+        <div class="card hidden" id="home-suggestions-card">
+          <div class="card-head">
+            <h2>Patterns &amp; suggestions</h2>
+            <button id="home-suggestions-open">Open suggestion inbox</button>
+          </div>
+          <div id="home-suggestions-list"></div>
+        </div>
+
         <div class="card hidden" id="whatnext-card">
           <h2>What next</h2>
           <div id="whatnext-list"></div>
@@ -149,6 +160,17 @@
           </dl>
           <p class="muted-text">These were detected automatically — if your OAuth client is listed here, yt-manage uses it as-is and will not ask for it again.</p>
         </div>
+      </section>
+
+      <!-- SUGGESTIONS -->
+      <section id="section-suggestions" class="panel">
+        <div class="toolbar">
+          <button id="inbox-load-btn" class="primary">Refresh suggestions</button>
+          <label class="check"><input id="inbox-show-hidden" type="checkbox"> Show hidden (dismissed / snoozed)</label>
+        </div>
+        <p class="muted-text">Suggestions are computed from your synced channels: title patterns, grouping hints, title health, cadence, dead slots, thumbnail checks and anomalies. Dismissing or snoozing applies to the whole suggestion type — nothing nags twice.</p>
+        <div class="status-line" id="inbox-status"></div>
+        <div id="inbox-list"></div>
       </section>
 
       <!-- VIDEOS -->
@@ -249,6 +271,12 @@
           <button id="episode-merge-btn" data-write disabled>Merge selected (0)</button>
         </div>
         <div class="status-line" id="episode-status"></div>
+        <div class="card" id="series-card">
+          <h2>Series</h2>
+          <p class="muted-text">Whole series detected from title patterns. Rename a series to one clean naming scheme — the wizard builds a normal bulk-edit plan narrowed to just that series, so you review every change before it applies.</p>
+          <div id="series-list"><p class="muted-text">Loading…</p></div>
+          <div id="series-wizard" class="wizard-panel hidden"></div>
+        </div>
         <div id="episode-list"></div>
         <form id="schedule-form" class="card hidden">
           <h2>Schedule episode <span id="schedule-episode-id"></span></h2>
@@ -275,6 +303,103 @@
           <div class="status-line" id="schedule-status"></div>
           <ul id="schedule-result"></ul>
         </form>
+      </section>
+
+      <!-- AUTOMATION -->
+      <section id="section-automation" class="panel">
+        <div class="card" id="proposals-card">
+          <div class="card-head">
+            <h2>Approval queue</h2>
+            <button id="proposals-approve-all" data-write>Approve all pending</button>
+          </div>
+          <p class="muted-text">Rules in “propose” mode queue their actions here instead of applying them. Nothing runs until you approve it.</p>
+          <div class="status-line" id="proposals-status"></div>
+          <div id="proposals-list"></div>
+        </div>
+
+        <div class="card" id="autosync-card">
+          <div class="card-head">
+            <h2>Auto-sync</h2>
+            <button id="autosync-toggle" data-write>Pause</button>
+          </div>
+          <div id="autosync-body"><p class="muted-text">Loading…</p></div>
+          <p class="muted-text">Each account syncs on its own interval — set it per account under Settings → Per-account overrides (sync interval in minutes; 0 means no auto-sync).</p>
+        </div>
+
+        <div class="card" id="rules-card">
+          <h2>Rules</h2>
+          <p class="muted-text">“When a new video matches X, then rename / post a first comment / add to a playlist.” Dry-run a rule against your current library before saving it. Every firing is recorded in History (filter: Rules).</p>
+          <p class="muted-text">Automations respect quiet hours (Settings → Automation).</p>
+          <div id="rules-list"></div>
+          <h3 id="rule-form-title">New rule</h3>
+          <form id="rule-form">
+            <input type="hidden" id="rule-id">
+            <label>Name <input id="rule-name" type="text" placeholder="e.g. Number new episodes"></label>
+            <label class="check"><input id="rule-enabled" type="checkbox" checked> Enabled</label>
+            <label>Mode
+              <select id="rule-mode">
+                <option value="propose">Propose — queue for approval</option>
+                <option value="apply">Apply — run automatically</option>
+              </select>
+            </label>
+            <fieldset class="rule-group">
+              <legend>When a video matches</legend>
+              <label>Channel
+                <select id="rule-match-channel"><option value="">Any channel</option></select>
+              </label>
+              <label>Title contains <input id="rule-match-query" type="text" placeholder="(any)"></label>
+              <label>Visibility
+                <select id="rule-match-visibility">
+                  <option value="">Any visibility</option>
+                  <option value="public">Public</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="private">Private</option>
+                  <option value="scheduled">Scheduled</option>
+                  <option value="draft">Draft</option>
+                </select>
+              </label>
+            </fieldset>
+            <fieldset class="rule-group">
+              <legend>Then</legend>
+              <label>Action
+                <select id="rule-action-type">
+                  <option value="rename">Rename with template</option>
+                  <option value="comment">Post first comment</option>
+                  <option value="playlist">Add to playlist</option>
+                </select>
+              </label>
+              <label id="rule-action-template-row">Title template <input id="rule-action-template" type="text" placeholder="{title} #{n}">
+                <span class="muted-text">Tokens: {title} and {n} are substituted by the plan builder.</span></label>
+              <label id="rule-action-text-row" class="hidden">Comment text <textarea id="rule-action-text" rows="3" placeholder="First comment text — tokens {title} {episode} {series} {channel}"></textarea></label>
+              <label id="rule-action-playlist-row" class="hidden">Playlist
+                <select id="rule-action-playlist"><option value="">Choose a playlist…</option></select>
+              </label>
+            </fieldset>
+            <div class="row">
+              <button type="button" id="rule-dry-run-btn">Dry run</button>
+              <button type="submit" class="primary" data-write>Save rule</button>
+              <button type="button" id="rule-reset-btn">Clear form</button>
+            </div>
+            <div class="status-line" id="rule-status"></div>
+            <div id="rule-dry-run-result" class="hidden"></div>
+          </form>
+        </div>
+      </section>
+
+      <!-- COMMENT CENTRE -->
+      <section id="section-commentcentre" class="panel">
+        <div class="toolbar">
+          <button id="cc-load-btn" class="primary">Refresh comment centre</button>
+        </div>
+        <div class="warn-box">Pinning a comment is a manual YouTube Studio step — the YouTube API has no pin endpoint. Post the first comment here, pin it in Studio, then mark it pinned so the checklist stays truthful.</div>
+        <div class="chips" id="cc-filter-chips">
+          <button class="chip is-active" data-cc-filter="all">All</button>
+          <button class="chip" data-cc-filter="posted">Posted</button>
+          <button class="chip" data-cc-filter="pending">Pending</button>
+          <button class="chip" data-cc-filter="needspin">Needs pin</button>
+        </div>
+        <div class="status-line" id="cc-status"></div>
+        <div id="cc-list"></div>
       </section>
 
       <!-- SCHEDULES -->
@@ -389,6 +514,11 @@
           <button class="chip" data-kind="sync">Sync</button>
           <button class="chip" data-kind="rename">Rename</button>
           <button class="chip" data-kind="schedule">Schedule</button>
+          <button class="chip" data-kind="rule">Rules</button>
+          <button class="chip" data-kind="automation">Automation</button>
+          <button class="chip" data-kind="comment">Comment</button>
+          <button class="chip" data-kind="backup">Backup</button>
+          <button class="chip" data-kind="anomaly">Anomaly</button>
         </div>
         <div class="status-line" id="history-status"></div>
         <div id="history-list"></div>
@@ -408,9 +538,41 @@
           <button id="settings-export-btn">Export settings</button>
           <button id="settings-import-btn" data-write>Import settings</button>
           <input id="settings-import-file" type="file" accept=".json,application/json" class="hidden">
+          <button id="workflow-export-btn">Export workflow</button>
+          <button id="workflow-import-btn" data-write>Import workflow</button>
+          <input id="workflow-import-file" type="file" accept=".json,application/json" class="hidden">
         </div>
         <div class="status-line" id="settings-status"></div>
         <div id="settings-groups"></div>
+        <div class="card" id="channel-defaults-card">
+          <h2>Channel defaults &amp; pipeline</h2>
+          <p class="muted-text">Smart defaults are remembered per channel and pre-fill the bulk-edit template, the schedule cadence and first-comment text. The pipeline runs when a scheduled video goes live: the first comment posts automatically, and the video can be emailed to you and added to a playlist.</p>
+          <label>Channel
+            <select id="cd-channel"><option value="">Choose a channel…</option></select>
+          </label>
+          <div id="cd-fields" class="hidden">
+            <label>Rename template <input id="cd-rename-template" type="text" placeholder="{title} #{n}"></label>
+            <label>Default cadence (days) <input id="cd-cadence" type="number" min="0" step="1" placeholder="0 = none"></label>
+            <label>First-comment template <textarea id="cd-comment-template" rows="3" placeholder="Tokens: {title} {episode} {series} {channel}"></textarea></label>
+            <fieldset class="rule-group">
+              <legend>Post-publish pipeline</legend>
+              <label class="check"><input id="cd-pipeline-comment" type="checkbox"> Post the first comment when a scheduled video goes live</label>
+              <label class="check"><input id="cd-pipeline-email" type="checkbox"> Email me when it publishes</label>
+              <label>Add to playlist
+                <select id="cd-pipeline-playlist"><option value="0">None</option></select>
+              </label>
+            </fieldset>
+            <fieldset class="rule-group">
+              <legend>Watched series (ongoing)</legend>
+              <p class="muted-text">New parts of a watched series are grouped automatically and the next schedule slots are drafted for approval.</p>
+              <div id="cd-watch-series"></div>
+            </fieldset>
+            <div class="row">
+              <button id="cd-save-btn" class="primary" data-write>Save channel defaults</button>
+            </div>
+            <div class="status-line" id="cd-status"></div>
+          </div>
+        </div>
         <div class="card" id="settings-per-account-card">
           <h2>Per-account overrides</h2>
           <p class="muted-text">These apply to one account only. An account with notifications off and a sync interval of 0 inherits the global behaviour.</p>

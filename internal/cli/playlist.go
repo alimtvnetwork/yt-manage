@@ -76,6 +76,8 @@ func runPlaylistList(args []string) int {
 	if hasHelpFlag(args) {
 		return runGroupUsage(playlistListUsage)
 	}
+	wantJSON := hasJSONFlag(args)
+	args = stripJSONFlag(args)
 	fs := flag.NewFlagSet("playlist list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	channelID := fs.Uint("channel", 0, "local channel ID")
@@ -105,6 +107,9 @@ func runPlaylistList(args []string) int {
 			playlist.Title,
 			strconv.FormatInt(playlist.ItemCount, 10),
 		})
+	}
+	if wantJSON {
+		return printJSON(playlists)
 	}
 	printTable(os.Stdout, []string{"ID", "YT ID", "Title", "Items"}, rows)
 	return 0

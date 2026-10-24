@@ -132,6 +132,7 @@ func runSyncStatus(args []string) int {
 	if hasHelpFlag(args) {
 		return runGroupUsage(syncUsage)
 	}
+	wantJSON := hasJSONFlag(args)
 	store, dbs, err := openStore()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yt-manage: %v\n", err)
@@ -167,6 +168,9 @@ func runSyncStatus(args []string) int {
 				lastError,
 			})
 		}
+	}
+	if wantJSON {
+		return printJSON(rows)
 	}
 	printTable(os.Stdout, []string{"Account", "Resource", "Last run", "Last error"}, rows)
 	return 0

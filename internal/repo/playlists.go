@@ -11,6 +11,7 @@ import (
 type PlaylistRepository interface {
 	UpsertByYTID(playlist *model.Playlist) error
 	GetByYTID(ytPlaylistID string) (*model.Playlist, error)
+	GetByID(id uint) (*model.Playlist, error)
 	ListByChannel(channelID uint) ([]model.Playlist, error)
 	ReplaceItems(playlistID uint, items []model.PlaylistItem) error
 	ListItems(playlistID uint) ([]model.PlaylistItem, error)
@@ -28,6 +29,14 @@ func (r *playlistRepository) UpsertByYTID(playlist *model.Playlist) error {
 			"channel_id", "title", "description", "item_count", "updated_at",
 		}),
 	}).Create(playlist).Error
+}
+
+func (r *playlistRepository) GetByID(id uint) (*model.Playlist, error) {
+	var playlist model.Playlist
+	if err := r.db.First(&playlist, id).Error; err != nil {
+		return nil, err
+	}
+	return &playlist, nil
 }
 
 func (r *playlistRepository) GetByYTID(ytPlaylistID string) (*model.Playlist, error) {

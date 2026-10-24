@@ -192,6 +192,7 @@ func runAccountList(args []string) int {
 	if hasHelpFlag(args) {
 		return runGroupUsage(accountUsage)
 	}
+	wantJSON := hasJSONFlag(args)
 	store, dbs, err := openStore()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yt-manage: %v\n", err)
@@ -231,6 +232,9 @@ func runAccountList(args []string) int {
 				created,
 			})
 		}
+	}
+	if wantJSON {
+		return printJSON(accounts)
 	}
 	printTable(os.Stdout, []string{"ID", "Label", "Channel", "Channel ID", "Created"}, rows)
 	return 0

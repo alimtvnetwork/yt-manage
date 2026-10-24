@@ -25,7 +25,8 @@ Subcommands:
   import <file>   Import settings JSON produced by export ('-' = stdin)
 
 Keys: daily_quota_budget, server_addr, default_account, default_channel,
-read_only, mail.smtp_host, mail.smtp_port,
+read_only, quiet_hours_start, quiet_hours_end, webhook_url,
+webhook_secret, mail.smtp_host, mail.smtp_port,
 mail.imap_host, mail.imap_port, mail.username, mail.password.
 `
 
@@ -36,7 +37,7 @@ func runSettings(args []string) int {
 	}
 	switch args[0] {
 	case "list":
-		return runSettingsList()
+		return runSettingsList(args[1:])
 	case "get":
 		return runSettingsGet(args[1:])
 	case "set":
@@ -63,7 +64,7 @@ func loadCLISettings() (*config.Settings, string, error) {
 	return settings, home, err
 }
 
-func runSettingsList() int {
+func runSettingsList(args []string) int {
 	settings, _, err := loadCLISettings()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "yt-manage: %v\n", err)
@@ -80,6 +81,19 @@ func runSettingsList() int {
 			}
 		}
 		rows = append(rows, []string{def.Key, value, def.Default, def.Label})
+	}
+	if hasJSONFlag(args) {
+		type settingRow struct {
+			Key     string `json:"key"`
+			Value   string `json:"value"`
+			Default string `json:"default"`
+			Label   string `json:"label"`
+		}
+		jsonRows := make([]settingRow, 0, len(rows))
+		for _, row := range rows {
+			jsonRows = append(jsonRows, settingRow{Key: row[0], Value: row[1], Default: row[2], Label: row[3]})
+		}
+		return printJSON(jsonRows)
 	}
 	printTable(os.Stdout, []string{"Key", "Value", "Default", "Label"}, rows)
 	return 0

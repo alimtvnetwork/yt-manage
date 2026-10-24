@@ -70,6 +70,7 @@ type statusResponse struct {
 	ReadOnly      bool               `json:"readOnly"`
 	AppVersion    string             `json:"appVersion"`
 	CommentsSync  string             `json:"commentsLastSyncAt"`
+	AutoSync      autoSyncStatusDTO  `json:"autoSync"`
 }
 
 // oauthSource reports where the Google OAuth client comes from:
@@ -191,6 +192,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	response.ReadOnly = s.ReadOnly()
 	response.AppVersion = version.Version
+	response.AutoSync = s.autoSyncStatus()
 	for _, account := range accounts {
 		state, stateErr := s.store.SyncStates.Get(account.ID, "comments")
 		if stateErr == nil && state != nil && state.LastRunAt != nil {

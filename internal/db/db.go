@@ -32,7 +32,7 @@ func Open(homeDir string) (*DBs, error) {
 	if err != nil {
 		return nil, err
 	}
-	content, err := openOne(filepath.Join(dataDir, "content.db"), &model.Video{}, &model.Playlist{}, &model.PlaylistItem{}, &model.Comment{}, &model.TitleHistory{})
+	content, err := openOne(filepath.Join(dataDir, "content.db"), &model.Video{}, &model.Playlist{}, &model.PlaylistItem{}, &model.Comment{}, &model.TitleHistory{}, &model.CommentHistory{})
 	if err != nil {
 		closeDB(accounts)
 		return nil, err
