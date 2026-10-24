@@ -93,6 +93,7 @@ func runVideoList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	*channelID = withDefaultChannel(*channelID)
 	if *visibility != "" {
 		if _, err := model.ParseVisibility(*visibility); err != nil {
 			fmt.Fprintf(os.Stderr, "yt-manage video list: %v\n", err)

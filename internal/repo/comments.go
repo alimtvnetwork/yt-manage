@@ -10,6 +10,7 @@ import (
 // CommentRepository is the data-access contract for comments.
 type CommentRepository interface {
 	UpsertByYTID(comment *model.Comment) error
+	GetByYTID(ytCommentID string) (*model.Comment, error)
 	GetFirstByVideo(videoID uint) (*model.Comment, error)
 	ListByVideo(videoID uint) ([]model.Comment, error)
 	ListFirstComments(limit int) ([]model.Comment, error)
@@ -28,6 +29,14 @@ func (r *commentRepository) UpsertByYTID(comment *model.Comment) error {
 			"video_id", "author", "text", "is_first", "is_pinned_known", "published_at", "updated_at",
 		}),
 	}).Create(comment).Error
+}
+
+func (r *commentRepository) GetByYTID(ytCommentID string) (*model.Comment, error) {
+	var comment model.Comment
+	if err := r.db.Where("yt_comment_id = ?", ytCommentID).First(&comment).Error; err != nil {
+		return nil, err
+	}
+	return &comment, nil
 }
 
 func (r *commentRepository) GetFirstByVideo(videoID uint) (*model.Comment, error) {

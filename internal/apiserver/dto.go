@@ -43,6 +43,7 @@ type accountDTO struct {
 	Label     string       `json:"label"`
 	ChannelID string       `json:"channelId"`
 	CreatedAt string       `json:"createdAt"`
+	UpdatedAt string       `json:"updatedAt"`
 	Channels  []channelDTO `json:"channels"`
 }
 

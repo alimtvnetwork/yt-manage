@@ -23,6 +23,7 @@ type Result struct {
 	ChannelTitle  string
 	Videos        int
 	Playlists     int
+	Comments      int
 	SkippedItems  int
 	UnitsEstimate int
 	IsIncremental bool
@@ -32,6 +33,9 @@ type Result struct {
 // 1 unit for channels.list, one uploads playlistItems page per 50
 // videos, one videos.list batch per 50 videos, 1 unit for
 // playlists.list, and one playlistItems page per known playlist.
+// Comment mirroring (item 97) adds 1 unit per video actually
+// fetched, counted into the run's result after the fact, since it
+// depends on which videos report having comments.
 // It is pure: no network and no database access.
 func EstimateUnits(videoCount int64, playlistCount int) int {
 	units := 1
@@ -112,6 +116,13 @@ func RunAccount(ctx context.Context, home string, store *repo.Store, key []byte,
 	result.SkippedItems = skipped
 	result.Playlists = playlistCount
 
+	commentCount, commentVideos, err := syncComments(ctx, svc, store, localChannel.ID)
+	if err != nil {
+		return nil, recordSyncError(store, accountID, "comments", err)
+	}
+	result.Comments = commentCount
+	result.UnitsEstimate += commentVideos
+
 	refreshedAt := time.Now()
 	if err := store.Channels.UpsertByYTID(channelModel(accountID, ch, refreshedAt)); err != nil {
 		return nil, fmt.Errorf("refresh channel %s: %w", ch.Id, err)
@@ -127,7 +138,59 @@ func RunAccount(ctx context.Context, home string, store *repo.Store, key []byte,
 	if err := recordSyncSuccess(store, accountID, "playlists", runAt); err != nil {
 		return nil, err
 	}
+	if err := recordSyncSuccess(store, accountID, "comments", runAt); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+// maxCommentVideosPerSync caps the comment mirroring of one run:
+// at most 50 videos, one page of top-level comments each, so a
+// sync stays within a predictable quota envelope (item 97).
+const maxCommentVideosPerSync = 50
+
+// syncComments mirrors top-level comments for the channel's
+// videos that report having comments. A video whose comment list
+// fails (comments disabled between listing and fetch, quota, ...)
+// is skipped without failing the sync. A comment that is already
+// stored as the managed first comment keeps that flag.
+func syncComments(ctx context.Context, svc *youtube.Service, store *repo.Store, localChannelID uint) (comments int, videosFetched int, err error) {
+	videos, err := store.Videos.ListByChannel(localChannelID)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, video := range videos {
+		if video.CommentCount <= 0 || videosFetched >= maxCommentVideosPerSync {
+			continue
+		}
+		threads, fetchErr := ytapi.ListTopComments(ctx, svc, video.YTVideoID)
+		if fetchErr != nil {
+			continue
+		}
+		videosFetched++
+		for _, thread := range threads {
+			if thread.Snippet == nil || thread.Snippet.TopLevelComment == nil || thread.Snippet.TopLevelComment.Snippet == nil {
+				continue
+			}
+			top := thread.Snippet.TopLevelComment
+			snippet := top.Snippet
+			isFirst := false
+			if existing, getErr := store.Comments.GetByYTID(top.Id); getErr == nil && existing != nil {
+				isFirst = existing.IsFirst
+			}
+			published, _ := time.Parse(time.RFC3339, snippet.PublishedAt)
+			comment := &model.Comment{
+				VideoID: video.ID, YTCommentID: top.Id,
+				Author: snippet.AuthorDisplayName, Text: snippet.TextOriginal,
+				IsFirst: isFirst, PublishedAt: &published,
+			}
+			if upsertErr := store.Comments.UpsertByYTID(comment); upsertErr != nil {
+				return comments, videosFetched, upsertErr
+			}
+			comments++
+		}
+	}
+	return comments, videosFetched, nil
 }
 
 // ensureLocalChannel returns the mirrored channel row for ch,

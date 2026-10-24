@@ -89,6 +89,18 @@ func FetchVideo(ctx context.Context, svc *youtube.Service, ytVideoID string) (*y
 
 // ListPlaylistItems returns every item of a playlist, paging through
 // playlistItems.list at 50 items per page (1 quota unit per page).
+// ListTopComments returns one page of top-level comment threads
+// for a video (spec 29, item 97: sync mirrors comments). Replies
+// are not fetched; one page keeps the quota cost at 1 unit.
+func ListTopComments(ctx context.Context, svc *youtube.Service, ytVideoID string) ([]*youtube.CommentThread, error) {
+	response, err := svc.CommentThreads.List([]string{"snippet"}).
+		VideoId(ytVideoID).MaxResults(20).TextFormat("plainText").Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return response.Items, nil
+}
+
 func ListPlaylistItems(ctx context.Context, svc *youtube.Service, playlistID string) ([]*youtube.PlaylistItem, error) {
 	var items []*youtube.PlaylistItem
 	pageToken := ""

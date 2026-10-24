@@ -35,6 +35,11 @@ const state = {
   settingsData: null,
   accounts: null,
   historyKind: "",
+  // Wave 4 (items 71-100)
+  selectionAnchor: -1,
+  paletteIndex: 0,
+  paletteItems: [],
+  playlistEdits: new Map(),
 };
 
 const SECTIONS = {
@@ -272,6 +277,130 @@ function renderQuota(source) {
   }
 }
 
+// ------------------------------------------------- wave 4 helpers
+// Read-only mode (item 95): /api/status is the source of truth.
+function isReadOnly() {
+  return !!(state.status && state.status.readOnly);
+}
+
+function renderReadOnly() {
+  const on = isReadOnly();
+  document.body.classList.toggle("read-only", on);
+  el("readonly-banner").classList.toggle("hidden", !on);
+}
+
+function relativeTime(iso) {
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + (minutes === 1 ? " minute ago" : " minutes ago");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + (hours === 1 ? " hour ago" : " hours ago");
+  const days = Math.floor(hours / 24);
+  return days + (days === 1 ? " day ago" : " days ago");
+}
+
+// Visibility as a coloured dot + text label (item 83): never colour
+// alone, and the existing text stays for screen readers.
+const VISIBILITY_DOTS = {
+  public: "vis-public",
+  private: "vis-private",
+  unlisted: "vis-unlisted",
+  scheduled: "vis-scheduled",
+  draft: "vis-draft",
+};
+
+function visibilityHTML(visibility) {
+  const value = String(visibility || "");
+  const cls = VISIBILITY_DOTS[value.toLowerCase()] || "vis-private";
+  return "<span class=\"vis\"><span class=\"vis-dot " + cls + "\" aria-hidden=\"true\"></span>" + escapeHTML(value) + "</span>";
+}
+
+// Thumbnails & avatars (item 82): YouTube CDN thumbnails degrade to
+// a letter placeholder when the image fails — never a broken icon.
+function thumbnailHTML(video) {
+  const letter = escapeHTML(String(video.title || "?").trim().charAt(0).toUpperCase() || "?");
+  if (!video.ytVideoId) return "<span class=\"thumb\"><span class=\"thumb-fallback\">" + letter + "</span></span>";
+  return "<span class=\"thumb\"><span class=\"thumb-fallback\">" + letter + "</span>" +
+    "<img src=\"https://i.ytimg.com/vi/" + encodeURIComponent(video.ytVideoId) + "/mqdefault.jpg\" alt=\"\" loading=\"lazy\" onerror=\"this.remove()\"></span>";
+}
+
+function avatarHTML(label) {
+  const letter = escapeHTML(String(label || "?").trim().charAt(0).toUpperCase() || "?");
+  return "<span class=\"avatar\" aria-hidden=\"true\">" + letter + "</span>";
+}
+
+// Recent items quick-jump (item 75): last 8 opened videos and last
+// 5 viewed episodes, in this browser only.
+function recentVideos() { return LS.get("recentVideos", []); }
+function recentEpisodes() { return LS.get("recentEpisodes", []); }
+
+function recordRecentVideo(video) {
+  if (!video || !video.id) return;
+  const entry = { id: video.id, title: video.title || "", ytVideoId: video.ytVideoId || "" };
+  const next = [entry].concat(recentVideos().filter((item) => item.id !== entry.id)).slice(0, 8);
+  LS.set("recentVideos", next);
+  renderRecents();
+}
+
+function recordRecentEpisode(episode) {
+  if (!episode || !episode.id) return;
+  const entry = {
+    id: episode.id,
+    title: episode.title || episode.episodeKey || ("Episode " + episode.id),
+    channelId: episode.channelId || "",
+  };
+  const next = [entry].concat(recentEpisodes().filter((item) => item.id !== entry.id)).slice(0, 5);
+  LS.set("recentEpisodes", next);
+  renderRecents();
+}
+
+function renderRecents() {
+  const card = el("recent-card");
+  if (!card) return;
+  const videos = recentVideos();
+  const episodes = recentEpisodes();
+  if (videos.length === 0 && episodes.length === 0) { card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
+  let html = "";
+  if (videos.length > 0) {
+    html += "<div class=\"recent-group\"><span class=\"recent-heading\">Videos</span>" +
+      videos.map((video) =>
+        "<button class=\"recent-item\" data-recent-video=\"" + video.id + "\">" +
+        thumbnailHTML(video) + "<span>" + escapeHTML(video.title || ("Video " + video.id)) + "</span></button>").join("") + "</div>";
+  }
+  if (episodes.length > 0) {
+    html += "<div class=\"recent-group\"><span class=\"recent-heading\">Episodes</span>" +
+      episodes.map((episode) =>
+        "<button class=\"recent-item\" data-recent-episode=\"" + episode.id + "\" data-channel=\"" + escapeHTML(episode.channelId) + "\">" +
+        "<span class=\"avatar\" aria-hidden=\"true\">▦</span><span>" + escapeHTML(episode.title) + "</span></button>").join("") + "</div>";
+  }
+  el("recent-list").innerHTML = html;
+}
+
+el("recent-list").addEventListener("click", async (event) => {
+  const videoBtn = event.target.closest("[data-recent-video]");
+  const episodeBtn = event.target.closest("[data-recent-episode]");
+  if (videoBtn) {
+    const id = videoBtn.dataset.recentVideo;
+    const stub = recentVideos().find((item) => String(item.id) === String(id));
+    navigate("videos");
+    try {
+      openDrawer(await api("GET", "/api/videos/" + id));
+    } catch (err) {
+      if (stub) openDrawer(stub);
+    }
+    return;
+  }
+  if (episodeBtn) {
+    if (episodeBtn.dataset.channel) el("episode-channel").value = episodeBtn.dataset.channel;
+    navigate("episodes");
+    loadEpisodes();
+  }
+});
+
 // ------------------------------------------------------- text highlight
 // Plain-text, case-insensitive, escape-safe highlighting (item 22).
 function highlightPlain(text, query) {
@@ -344,6 +473,46 @@ function applySidebar(collapsed) {
   document.body.classList.toggle("sidebar-collapsed", !!collapsed);
   el("set-sidebar-collapsed").checked = !!collapsed;
   LS.set("sidebarCollapsed", !!collapsed);
+}
+
+// Themes (item 81): System / Light / Dark, applied instantly via a
+// data-theme attribute on <html> and CSS variables. System follows
+// prefers-color-scheme and reacts when the OS theme changes.
+const systemThemeQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function themePreference() {
+  const value = LS.get("theme", "system");
+  return value === "light" || value === "dark" ? value : "system";
+}
+
+function effectiveTheme() {
+  const pref = themePreference();
+  if (pref !== "system") return pref;
+  return systemThemeQuery && systemThemeQuery.matches ? "dark" : "light";
+}
+
+function applyTheme() {
+  document.documentElement.dataset.theme = effectiveTheme();
+  const select = el("set-theme");
+  if (select) select.value = themePreference();
+}
+
+function cycleTheme() {
+  const order = ["system", "light", "dark"];
+  const next = order[(order.indexOf(themePreference()) + 1) % order.length];
+  LS.set("theme", next);
+  applyTheme();
+  showToast("Theme: " + next, "ok");
+}
+
+el("set-theme").addEventListener("change", () => {
+  LS.set("theme", el("set-theme").value);
+  applyTheme();
+});
+if (systemThemeQuery) {
+  const onSystemThemeChange = () => { if (themePreference() === "system") applyTheme(); };
+  if (systemThemeQuery.addEventListener) systemThemeQuery.addEventListener("change", onSystemThemeChange);
+  else if (systemThemeQuery.addListener) systemThemeQuery.addListener(onSystemThemeChange);
 }
 
 el("density-toggle").addEventListener("click", () => {
@@ -514,6 +683,10 @@ function setBadge(id, count) {
 
 function renderStatus(status) {
   renderQuota(status);
+  renderReadOnly();
+  // Footer shows the real version from the binary + data dir (item 99).
+  el("footer-version").textContent = "yt-manage" + (status.appVersion ? " v" + status.appVersion : "");
+  el("footer-datadir").textContent = status.dataDir || "";
   setBadge("badge-videos", status.videoCount);
   setBadge("badge-episodes", status.episodeCount);
   setBadge("badge-schedules", status.scheduleCount);
@@ -628,6 +801,14 @@ function renderChecklist(status) {
     return "<li class=\"" + (done ? "done" : "") + "\"><span class=\"box\">" + (done ? "✓" : "○") +
       "</span><button class=\"check-label\" data-goto=\"" + item[2] + "\">" + item[1] + "</button></li>";
   }).join("");
+  // Sync mirrors comments too; say when it last happened (item 97).
+  const commentsLine = el("checklist-comments-line");
+  if (status.commentsLastSyncAt) {
+    commentsLine.textContent = "Comments last synced " + relativeTime(status.commentsLastSyncAt) + ".";
+    commentsLine.classList.remove("hidden");
+  } else {
+    commentsLine.classList.add("hidden");
+  }
 }
 
 el("checklist-dismiss").addEventListener("click", () => {
@@ -718,12 +899,13 @@ function renderSyncResult(container, data) {
   }
   let html = "";
   if (rows.length > 0) {
-    html += "<table class=\"grid sync-table\"><thead><tr><th>Account</th><th>Channels</th><th>Videos</th><th>Playlists</th><th>API units</th></tr></thead><tbody>" +
+    html += "<table class=\"grid sync-table\"><thead><tr><th>Account</th><th>Channels</th><th>Videos</th><th>Playlists</th><th>Comments</th><th>API units</th></tr></thead><tbody>" +
       rows.map((row) =>
         "<tr><td>" + escapeHTML(pickField(row, ["label", "account", "accountLabel", "accountId", "id"]) || "Account") + "</td>" +
         "<td>" + escapeHTML(pickField(row, ["channels", "channelCount", "channel"])) + "</td>" +
         "<td>" + escapeHTML(pickField(row, ["videos", "videoCount"])) + "</td>" +
         "<td>" + escapeHTML(pickField(row, ["playlists", "playlistCount"])) + "</td>" +
+        "<td>" + escapeHTML(pickField(row, ["comments", "commentCount"])) + "</td>" +
         "<td>" + escapeHTML(pickField(row, ["units", "quotaUnits", "unitsUsed", "apiUnits"])) + "</td></tr>").join("") +
       "</tbody></table>";
   } else {
@@ -833,7 +1015,10 @@ async function loadVideos() {
   try {
     const data = await api("GET", "/api/videos?" + params.toString());
     state.videos = data.videos || [];
-    state.selected.clear();
+    // Selection survives a reload of the same list: keep only the
+    // ids still present (item 73).
+    const present = new Set(state.videos.map((video) => video.id));
+    state.selected.forEach((id) => { if (!present.has(id)) state.selected.delete(id); });
     state.activeVideoIndex = -1;
     state.videosLoaded = true;
     if (vs.q) recordRecentSearch(vs.q);
@@ -875,13 +1060,13 @@ function renderVideoEmpty(count, vs) {
   if (count > 0) { box.classList.add("hidden"); box.innerHTML = ""; return; }
   const libraryEmpty = state.status && !state.status.hasVideos;
   if (libraryEmpty) {
-    box.innerHTML = "<h3>No videos yet</h3>" +
+    box.innerHTML = "<span class=\"state-art\" aria-hidden=\"true\">▷</span><h3>No videos yet</h3>" +
       "<p>Your local mirror is empty. Sync a connected account to mirror its videos here — after that, search is instant and costs no YouTube API quota.</p>" +
       "<div class=\"row\"><button id=\"empty-sync-btn\" class=\"primary\">Sync now</button>" +
       "<button id=\"empty-demo-btn\">Load demo channel</button></div>";
   } else {
     const filters = activeFilters(vs);
-    box.innerHTML = "<h3>No videos match</h3>" +
+    box.innerHTML = "<span class=\"state-art\" aria-hidden=\"true\">⌕</span><h3>No videos match</h3>" +
       "<p>" + (filters.length ? "One of these filters may be excluding everything. Remove one at a time to find it:" : "Nothing matches the current view.") + "</p>" +
       (filters.length ? "<div class=\"filter-recovery\">" + filters.map((filter) =>
         "<span class=\"filter-token\">" + escapeHTML(filter.label) +
@@ -915,35 +1100,124 @@ function renderVideos() {
   const q = currentVideoState().q;
   tbody.innerHTML = state.videos.map((video, index) => {
     const checked = state.selected.has(video.id) ? " checked" : "";
-    const active = index === state.activeVideoIndex ? " class=\"keyboard-active\"" : "";
+    const rowCls = [];
+    if (index === state.activeVideoIndex) rowCls.push("keyboard-active");
+    if (state.selected.has(video.id)) rowCls.push("selected");
     const snippet = descriptionSnippet(video.description, q);
-    return "<tr data-id=\"" + video.id + "\"" + active + ">" +
-      "<td><input type=\"checkbox\" class=\"video-check\" data-id=\"" + video.id + "\"" + checked + "></td>" +
+    return "<tr data-id=\"" + video.id + "\"" + (rowCls.length ? " class=\"" + rowCls.join(" ") + "\"" : "") + ">" +
+      "<td><input type=\"checkbox\" class=\"video-check\" data-id=\"" + video.id + "\" aria-label=\"Select video " + video.id + "\"" + checked + "></td>" +
       "<td>" + video.id + "</td>" +
-      "<td>" + highlightTitle(video.title) + (snippet ? "<div class=\"snippet\">" + snippet + "</div>" : "") + "</td>" +
-      "<td>" + escapeHTML(video.visibility) + "</td>" +
+      "<td><span class=\"title-cell\">" + thumbnailHTML(video) + "<span>" + highlightTitle(video.title) + "</span></span>" +
+      (snippet ? "<div class=\"snippet\">" + snippet + "</div>" : "") + "</td>" +
+      "<td>" + visibilityHTML(video.visibility) + "</td>" +
       "<td>" + video.viewCount + "</td>" +
       "<td>" + (video.commentCount || 0) + "</td>" +
       "<td>" + escapeHTML(video.publishedAt || "") + "</td></tr>";
   }).join("");
   tbody.classList.add("refreshing");
+  // Tables announce their row counts to screen readers (item 86).
+  el("video-table").setAttribute("aria-label", "Videos, " + state.videos.length + " row" + (state.videos.length === 1 ? "" : "s"));
   el("video-select-all").checked = state.videos.length > 0 && state.selected.size === state.videos.length;
+  renderSelectionBar();
 }
+
+// File-manager style multi-select (item 73): shift-click selects a
+// range, ctrl/cmd-click toggles one row, and the bulk action bar
+// follows the selection (item 74).
+function setVideoSelectedAt(index, on) {
+  const video = state.videos[index];
+  if (!video) return;
+  if (on) state.selected.add(video.id); else state.selected.delete(video.id);
+  const row = el("video-rows").children[index];
+  if (row) {
+    row.classList.toggle("selected", on);
+    const box = row.querySelector(".video-check");
+    if (box) box.checked = on;
+  }
+}
+
+function selectVideoRange(from, to, on) {
+  const lo = Math.min(from, to);
+  const hi = Math.max(from, to);
+  for (let i = lo; i <= hi; i++) setVideoSelectedAt(i, on);
+}
+
+function syncSelectionUI() {
+  el("video-select-all").checked = state.videos.length > 0 && state.selected.size === state.videos.length;
+  renderSelectionBar();
+}
+
+function renderSelectionBar() {
+  const bar = el("selection-bar");
+  if (!bar) return;
+  const count = state.selected.size;
+  bar.classList.toggle("hidden", count === 0);
+  el("selection-count").textContent = count + (count === 1 ? " video selected" : " videos selected");
+}
+
+el("sel-clear-btn").addEventListener("click", () => {
+  state.selected.clear();
+  state.selectionAnchor = -1;
+  renderVideos();
+});
+
+// "Rename selected": build the plan from the current filter (the
+// only narrowing the plan API takes), then keep only the selected
+// ids included — applies already honour the include set via
+// onlyIds, so nothing outside the selection can be written.
+el("sel-rename-btn").addEventListener("click", async () => {
+  const wanted = new Set(state.selected);
+  const built = await buildBulkPlan();
+  if (!built) return;
+  let kept = 0;
+  state.planIncluded.forEach((id) => { if (!wanted.has(id)) state.planIncluded.delete(id); else kept++; });
+  renderBulkPlan();
+  el("bulk-plan").scrollIntoView({ block: "nearest" });
+  setStatus("video-status", kept > 0
+    ? "Plan ready: " + kept + " of your selected videos have changes — review, then apply."
+    : "None of the selected videos would change with the current template/regex — adjust the pattern above.", kept > 0 ? "ok" : "error");
+});
 
 el("video-rows").addEventListener("change", (event) => {
   const box = event.target.closest(".video-check");
   if (!box) return;
-  const id = Number(box.dataset.id);
-  if (box.checked) state.selected.add(id); else state.selected.delete(id);
-  box.closest("tr").classList.toggle("selected", box.checked);
-  el("video-select-all").checked = state.videos.length > 0 && state.selected.size === state.videos.length;
+  const row = box.closest("tr[data-id]");
+  const index = state.videos.findIndex((v) => v.id === Number(box.dataset.id));
+  if (box.checked) state.selected.add(Number(box.dataset.id)); else state.selected.delete(Number(box.dataset.id));
+  if (row) row.classList.toggle("selected", box.checked);
+  // Shift+click on a checkbox extends the anchor's state over the
+  // whole range; the click's modifier was captured before change.
+  if (state.pendingCheckShift && state.selectionAnchor >= 0 && index >= 0 && state.selectionAnchor !== index) {
+    selectVideoRange(state.selectionAnchor, index, box.checked);
+  } else if (index >= 0) {
+    state.selectionAnchor = index;
+  }
+  state.pendingCheckShift = false;
+  syncSelectionUI();
 });
 
 el("video-rows").addEventListener("click", (event) => {
-  if (event.target.closest(".video-check")) return;
+  const box = event.target.closest(".video-check");
+  if (box) {
+    state.pendingCheckShift = !!event.shiftKey;
+    return;
+  }
   const row = event.target.closest("tr[data-id]");
   if (!row) return;
-  const video = state.videos.find((v) => v.id === Number(row.dataset.id));
+  const index = state.videos.findIndex((v) => v.id === Number(row.dataset.id));
+  if (index === -1) return;
+  if (event.ctrlKey || event.metaKey) {
+    setVideoSelectedAt(index, !state.selected.has(state.videos[index].id));
+    state.selectionAnchor = index;
+    syncSelectionUI();
+    return;
+  }
+  if (event.shiftKey && state.selectionAnchor >= 0) {
+    selectVideoRange(state.selectionAnchor, index, true);
+    syncSelectionUI();
+    return;
+  }
+  const video = state.videos[index];
   if (video) openDrawer(video);
 });
 
@@ -1235,8 +1509,18 @@ el("search-all-results").addEventListener("click", async (event) => {
 
 // Detail drawer (item 18)
 function openDrawer(video) {
+  recordRecentVideo(video);
   el("edit-video-id").textContent = "#" + video.id + " (" + video.ytVideoId + ")";
-  el("drawer-visibility").textContent = video.visibility || "";
+  el("drawer-visibility").innerHTML = visibilityHTML(video.visibility);
+  const thumbImg = el("drawer-thumb-img");
+  el("drawer-thumb-fallback").textContent = String(video.title || "?").trim().charAt(0).toUpperCase() || "?";
+  if (video.ytVideoId) {
+    thumbImg.src = "https://i.ytimg.com/vi/" + encodeURIComponent(video.ytVideoId) + "/mqdefault.jpg";
+    thumbImg.classList.remove("hidden");
+    thumbImg.onerror = () => thumbImg.classList.add("hidden");
+  } else {
+    thumbImg.classList.add("hidden");
+  }
   el("drawer-views").textContent = String(video.viewCount || 0);
   el("drawer-comments").textContent = String(video.commentCount || 0);
   el("drawer-published").textContent = video.publishedAt || "";
@@ -1493,6 +1777,7 @@ function renderBulkPlan() {
   el("bulk-summary").textContent = (state.bulkPlan.summary || "") +
     "\n" + warned + " of " + changes.length + " change(s) have warnings" +
     ((state.bulkPlan.warnings || []).length ? "\n" + state.bulkPlan.warnings.join("\n") : "");
+  el("bulk-scope").textContent = bulkScopeText();
   el("bulk-changes").innerHTML = changes.map((change) => {
     const applied = state.planApplied.has(change.videoId);
     const included = state.planIncluded.has(change.videoId) && !applied;
@@ -1526,7 +1811,7 @@ el("bulk-changes").addEventListener("change", (event) => {
   updatePlanLabels();
 });
 
-el("bulk-plan-btn").addEventListener("click", async () => {
+async function buildBulkPlan() {
   setStatus("video-status", "Building plan...");
   const vs = currentVideoState();
   const body = {
@@ -1537,6 +1822,7 @@ el("bulk-plan-btn").addEventListener("click", async () => {
   if (vs.channel) body.channelId = Number(vs.channel);
   try {
     const data = await api("POST", "/api/videos/bulk-plan", body);
+    await ensureAccountsLoaded();
     state.bulkPlan = data;
     state.planIncluded = new Set((data.changes || []).map((change) => change.videoId));
     state.planApplied = new Set();
@@ -1544,12 +1830,100 @@ el("bulk-plan-btn").addEventListener("click", async () => {
     state.planFailedIds = [];
     state.planKept = true;
     el("bulk-plan").classList.remove("hidden");
+    hidePreflight("bulk-preflight");
     renderBulkPlan();
     setStatus("video-status", (data.changes || []).length + " change(s) planned", "ok");
+    return true;
   } catch (err) {
     setStatus("video-status", friendlyError(err), "error");
+    showErrorToast(err, "videos");
+    return false;
   }
-});
+}
+
+el("bulk-plan-btn").addEventListener("click", buildBulkPlan);
+
+// ---------------------------------------------------- trust helpers
+// Scope statements (item 92) and pre-flight checks (item 93).
+async function ensureAccountsLoaded() {
+  if (state.accounts) return;
+  try { state.accounts = await api("GET", "/api/accounts"); } catch (err) { state.accounts = []; }
+}
+
+function accountLabelForChannel(channelId) {
+  const accounts = state.accounts || [];
+  for (const account of accounts) {
+    if ((account.channels || []).some((channel) => String(channel.id) === String(channelId))) {
+      return account.label || ("Account " + account.id);
+    }
+  }
+  return "";
+}
+
+function scopeSuffix(channelId) {
+  if (!channelId) return "";
+  const title = channelTitle(channelId) || ("channel " + channelId);
+  const account = accountLabelForChannel(channelId);
+  return " on " + title + (account ? " (" + account + ")" : "");
+}
+
+function bulkScopeText() {
+  if (!state.bulkPlan) return "";
+  const byChannel = new Map();
+  (state.bulkPlan.changes || []).forEach((change) => {
+    const video = state.videos.find((item) => item.id === change.videoId);
+    const channelId = video ? video.channelId : (change.channelId || 0);
+    byChannel.set(channelId, (byChannel.get(channelId) || 0) + 1);
+  });
+  const parts = [];
+  byChannel.forEach((count, channelId) => {
+    parts.push(count + (count === 1 ? " video" : " videos") + (channelId ? scopeSuffix(channelId) : " on other channels"));
+  });
+  return parts.length ? "This will change " + parts.join("; ") + "." : "";
+}
+
+function renderPreflight(boxId, result, onAnyway) {
+  const box = el(boxId);
+  if (!box) return;
+  box.classList.remove("hidden");
+  box.innerHTML = "<div class=\"preflight-title\">Pre-flight checks</div>" +
+    (result.checks || []).map((check) =>
+      "<div class=\"preflight-row " + (check.ok ? "is-ok" : "is-fail") + "\">" +
+      "<span class=\"preflight-mark\">" + (check.ok ? "✓" : "✗") + "</span>" +
+      "<span class=\"preflight-name\">" + escapeHTML(check.name) + "</span>" +
+      "<span class=\"preflight-msg\">" + escapeHTML(check.message || "") + "</span></div>").join("") +
+    (onAnyway ? "<div class=\"row\"><button class=\"preflight-anyway\" data-write>Apply anyway</button></div>" : "");
+  const button = box.querySelector(".preflight-anyway");
+  if (button && onAnyway) {
+    button.addEventListener("click", () => { hidePreflight(boxId); onAnyway(); });
+  }
+}
+
+function hidePreflight(boxId) {
+  const box = el(boxId);
+  if (box) { box.classList.add("hidden"); box.innerHTML = ""; }
+}
+
+// Bulk applies run the checks first; a failure needs an explicit
+// "Apply anyway" — and a missing plan never gets one (item 93).
+async function applyWithPreflight(ids, label) {
+  if (!state.bulkPlan || ids.length === 0) return;
+  let result;
+  try {
+    result = await api("POST", "/api/preflight", { kind: "bulk", planId: state.bulkPlan.planId });
+  } catch (err) {
+    setStatus("video-status", friendlyError(err), "error");
+    showErrorToast(err, "videos");
+    return;
+  }
+  if (result.ok) {
+    renderPreflight("bulk-preflight", result, null);
+    await applyPlanIds(ids, label);
+    return;
+  }
+  renderPreflight("bulk-preflight", result, () => applyPlanIds(ids, label));
+  setStatus("video-status", "Pre-flight checks failed — review them below, or use Apply anyway.", "error");
+}
 
 async function applyPlanIds(ids, label) {
   if (!state.bulkPlan || ids.length === 0) return;
@@ -1593,12 +1967,12 @@ async function applyPlanIds(ids, label) {
   }
 }
 
-el("bulk-apply-btn").addEventListener("click", () => applyPlanIds(planIncludedIds(), "Applying included rows"));
-el("bulk-apply-first-btn").addEventListener("click", () => applyPlanIds(planIncludedIds().slice(0, 5), "Applying first 5"));
+el("bulk-apply-btn").addEventListener("click", () => applyWithPreflight(planIncludedIds(), "Applying included rows"));
+el("bulk-apply-first-btn").addEventListener("click", () => applyWithPreflight(planIncludedIds().slice(0, 5), "Applying first 5"));
 el("bulk-apply-all-btn").addEventListener("click", () =>
-  applyPlanIds(planPendingChanges().map((change) => change.videoId), "Applying all changes"));
+  applyWithPreflight(planPendingChanges().map((change) => change.videoId), "Applying all changes"));
 el("bulk-retry-btn").addEventListener("click", () =>
-  applyPlanIds(state.planFailedIds.slice(), "Retrying failed rows"));
+  applyWithPreflight(state.planFailedIds.slice(), "Retrying failed rows"));
 
 // ----------------------------------------------------------- saved searches
 async function savedSearchCount(saved) {
@@ -1621,7 +1995,7 @@ async function renderSavedSearches() {
     "<div class=\"saved-item\"><button class=\"saved-apply\" data-saved=\"" + saved.id + "\">" +
     "<span class=\"saved-name\">" + escapeHTML(saved.name) + "</span>" +
     "<span class=\"saved-count\" id=\"saved-count-" + saved.id + "\">…</span></button>" +
-    "<button class=\"saved-del\" data-saved-del=\"" + saved.id + "\" title=\"Delete saved search\">✕</button></div>").join("");
+    "<button class=\"saved-del\" data-saved-del=\"" + saved.id + "\" title=\"Delete saved search\" aria-label=\"Delete saved search\" data-write>✕</button></div>").join("");
   for (const saved of state.savedSearches) {
     const count = await savedSearchCount(saved);
     const node = el("saved-count-" + saved.id);
@@ -1687,7 +2061,7 @@ el("saved-search-list").addEventListener("click", async (event) => {
 
 // --------------------------------------------------------------- episodes
 function episodeEmptyHTML() {
-  return "<div class=\"empty-state\"><h3>No episodes yet</h3>" +
+  return "<div class=\"empty-state\"><span class=\"state-art\" aria-hidden=\"true\">▦</span><h3>No episodes yet</h3>" +
     "<p>Episodes are grouped automatically from titles like “Series EP3 Part 2” — the grouper reads episode and part markers even when they are inconsistent.</p>" +
     "<p>Sync a channel first, then run grouping from the CLI: <code>yt-manage episode group</code></p></div>";
 }
@@ -1737,7 +2111,7 @@ function renderEpisodeBoard() {
           "\" data-episode-id=\"" + episode.id + "\"><span class=\"drag-handle\" title=\"Drag to resequence\">⋮⋮</span> Part " +
           part.partNumber + " (seq " + part.sequence + "): " + escapeHTML(part.title) +
           " <span class=\"pill\">" + escapeHTML(part.ytVideoId) + "</span> " + partStatusChip(part) +
-          (isFirst ? "" : " <button data-split-episode=\"" + episode.id + "\" data-split-video=\"" + part.videoId + "\">Split here</button>") +
+          (isFirst ? "" : " <button data-split-episode=\"" + episode.id + "\" data-split-video=\"" + part.videoId + "\" data-write>Split here</button>") +
           "</li>";
       }).join("");
       const mergeChecked = state.episodeMergeSelected.has(episode.id) ? " checked" : "";
@@ -1799,10 +2173,14 @@ el("episode-list").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-schedule]");
   if (!button) return;
   state.currentEpisodeId = button.dataset.schedule;
+  const episode = state.episodes.find((item) => String(item.id) === String(state.currentEpisodeId));
+  if (episode) recordRecentEpisode(episode);
   el("schedule-form").classList.remove("hidden");
   el("schedule-episode-id").textContent = "#" + state.currentEpisodeId;
   setStatus("schedule-status", "");
   el("schedule-result").innerHTML = "";
+  el("schedule-scope").textContent = "";
+  hidePreflight("schedule-preflight");
   state.schedulePlan = null;
   renderSchedulePlan();
 });
@@ -1988,6 +2366,19 @@ function renderSchedulePlan() {
     html += "<p class=\"muted-text\">" + state.schedulePlan.skippedPublic + " public video(s) skipped.</p>";
   }
   entriesBox.innerHTML = html || "<p class=\"muted-text\">No entries in this plan.</p>";
+  renderScheduleScope();
+}
+
+// Scope statement for the schedule apply (item 92).
+function renderScheduleScope() {
+  const node = el("schedule-scope");
+  if (!node) return;
+  const entries = state.schedulePlan && state.schedulePlanEpisodeId === state.currentEpisodeId
+    ? (state.schedulePlan.entries || []) : [];
+  if (entries.length === 0) { node.textContent = ""; return; }
+  const episode = state.episodes.find((item) => String(item.id) === String(state.currentEpisodeId));
+  const suffix = episode ? scopeSuffix(episode.channelId) : "";
+  node.textContent = "This will change " + entries.length + (entries.length === 1 ? " video" : " videos") + suffix + ".";
 }
 
 async function loadSchedulePlan() {
@@ -2002,6 +2393,7 @@ async function loadSchedulePlan() {
     });
     state.schedulePlan = data;
     state.schedulePlanEpisodeId = state.currentEpisodeId;
+    await ensureAccountsLoaded();
     renderSchedulePlan();
   } catch (err) {
     setStatus("schedule-status", friendlyError(err), "error");
@@ -2028,8 +2420,7 @@ el("schedule-cadence").addEventListener("input", () => {
 el("schedule-starts").addEventListener("change", queueSchedulePlan);
 el("schedule-public").addEventListener("change", queueSchedulePlan);
 
-el("schedule-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
+async function doApplySchedule() {
   const local = el("schedule-starts").value;
   if (!local) { setStatus("schedule-status", "Starts-at is required", "error"); return; }
   const startsAt = new Date(local).toISOString();
@@ -2047,10 +2438,40 @@ el("schedule-form").addEventListener("submit", async (event) => {
       "<li>" + escapeHTML(entry.ytVideoId) + " → " + escapeHTML(entry.publishAt) + "</li>").join("");
     state.schedulePlan = null;
     el("schedule-plan-preview").classList.add("hidden");
+    el("schedule-scope").textContent = "";
+    hidePreflight("schedule-preflight");
     loadStatus();
   } catch (err) {
     setStatus("schedule-status", friendlyError(err), "error");
   }
+}
+
+// Schedule applies run pre-flight first (item 93): token, quota and
+// publish-time conflicts from the previewed plan entries.
+el("schedule-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const local = el("schedule-starts").value;
+  if (!local) { setStatus("schedule-status", "Starts-at is required", "error"); return; }
+  const episode = state.episodes.find((item) => String(item.id) === String(state.currentEpisodeId));
+  if (!episode) { doApplySchedule(); return; }
+  const entries = state.schedulePlan && state.schedulePlanEpisodeId === state.currentEpisodeId
+    ? (state.schedulePlan.entries || []).map((entry) => ({ videoId: entry.videoId, publishAt: entry.publishAt }))
+    : [];
+  let result;
+  try {
+    result = await api("POST", "/api/preflight", { kind: "schedule", channelId: episode.channelId, entries });
+  } catch (err) {
+    setStatus("schedule-status", friendlyError(err), "error");
+    showErrorToast(err, "episodes");
+    return;
+  }
+  if (result.ok) {
+    renderPreflight("schedule-preflight", result, null);
+    doApplySchedule();
+    return;
+  }
+  renderPreflight("schedule-preflight", result, () => doApplySchedule());
+  setStatus("schedule-status", "Pre-flight checks failed — review them above, or use Apply anyway.", "error");
 });
 
 // --------------------------------------------------------------- schedules
@@ -2158,13 +2579,15 @@ async function loadPlaylists() {
   setStatus("playlist-status", "Loading...");
   try {
     const playlists = await api("GET", "/api/playlists?channel=" + encodeURIComponent(channel));
+    state.playlistEdits = new Map(playlists.map((playlist) => [String(playlist.id), playlist]));
     el("playlist-list").innerHTML = playlists.map((playlist) =>
       "<div class=\"card playlist\"><h3>" + escapeHTML(playlist.title) +
       " <span class=\"pill\">" + playlist.itemCount + " items</span></h3>" +
       "<p>" + escapeHTML(playlist.description || "") + "</p>" +
-      "<div class=\"inline-form\"><input data-pl-title=\"" + playlist.id + "\" value=\"" + escapeHTML(playlist.title) + "\">" +
-      "<input data-pl-desc=\"" + playlist.id + "\" value=\"" + escapeHTML(playlist.description || "") + "\">" +
-      "<button data-pl-save=\"" + playlist.id + "\">Save</button></div></div>").join("") ||
+      "<div class=\"inline-form\"><input data-pl-title=\"" + playlist.id + "\" value=\"" + escapeHTML(playlist.title) + "\" aria-label=\"Playlist title\">" +
+      "<input data-pl-desc=\"" + playlist.id + "\" value=\"" + escapeHTML(playlist.description || "") + "\" aria-label=\"Playlist description\">" +
+      "<button data-pl-review=\"" + playlist.id + "\" data-write>Review changes</button></div>" +
+      "<div class=\"pl-review hidden\" id=\"pl-review-" + playlist.id + "\"></div></div>").join("") ||
       "<div class=\"empty-state\"><h3>No playlists for this channel</h3>" +
       "<p>Playlists you create in YouTube Studio appear here after a sync — or create one with the form below and it is made on YouTube right away.</p></div>";
     setStatus("playlist-status", playlists.length + " playlist(s)", "ok");
@@ -2175,20 +2598,71 @@ async function loadPlaylists() {
 
 el("playlist-load-btn").addEventListener("click", loadPlaylists);
 
+// Playlist edits are staged (item 91): edit → review the diff →
+// apply or discard. Nothing reaches YouTube before Apply.
+function playlistFieldValues(id) {
+  return {
+    title: document.querySelector("[data-pl-title=\"" + id + "\"]").value,
+    description: document.querySelector("[data-pl-desc=\"" + id + "\"]").value,
+  };
+}
+
+function reviewPlaylist(id) {
+  const original = state.playlistEdits.get(String(id));
+  const box = el("pl-review-" + id);
+  if (!original || !box) return;
+  const next = playlistFieldValues(id);
+  const rows = [];
+  if (next.title !== (original.title || "")) {
+    rows.push("<div class=\"diff-row\"><span class=\"diff-label\">Title</span><span class=\"diff-old\">" +
+      escapeHTML(original.title || "") + "</span><span class=\"move-arrow\">→</span><span class=\"diff-new\">" +
+      escapeHTML(next.title) + "</span></div>");
+  }
+  if (next.description !== (original.description || "")) {
+    rows.push("<div class=\"diff-row\"><span class=\"diff-label\">Description</span><span class=\"diff-old\">" +
+      escapeHTML(original.description || "") + "</span><span class=\"move-arrow\">→</span><span class=\"diff-new\">" +
+      escapeHTML(next.description) + "</span></div>");
+  }
+  if (rows.length === 0) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    setStatus("playlist-status", "No changes to review — the fields match what is saved.", "ok");
+    return;
+  }
+  box.innerHTML = "<div class=\"preview-label\">Review — not applied yet</div>" + rows.join("") +
+    "<div class=\"row\"><button class=\"primary\" data-pl-apply=\"" + id + "\" data-write>Apply changes</button>" +
+    "<button data-pl-discard=\"" + id + "\">Discard</button></div>";
+  box.classList.remove("hidden");
+}
+
 el("playlist-list").addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-pl-save]");
-  if (!button) return;
-  const id = button.dataset.plSave;
+  const review = event.target.closest("[data-pl-review]");
+  if (review) { reviewPlaylist(review.dataset.plReview); return; }
+  const discard = event.target.closest("[data-pl-discard]");
+  if (discard) {
+    const id = discard.dataset.plDiscard;
+    const original = state.playlistEdits.get(String(id));
+    if (original) {
+      document.querySelector("[data-pl-title=\"" + id + "\"]").value = original.title || "";
+      document.querySelector("[data-pl-desc=\"" + id + "\"]").value = original.description || "";
+    }
+    const box = el("pl-review-" + id);
+    if (box) { box.classList.add("hidden"); box.innerHTML = ""; }
+    setStatus("playlist-status", "Changes discarded — nothing was sent to YouTube.", "ok");
+    return;
+  }
+  const apply = event.target.closest("[data-pl-apply]");
+  if (!apply) return;
+  const id = apply.dataset.plApply;
   setStatus("playlist-status", "Saving...");
   try {
-    await api("PATCH", "/api/playlists/" + id, {
-      title: document.querySelector("[data-pl-title=\"" + id + "\"]").value,
-      description: document.querySelector("[data-pl-desc=\"" + id + "\"]").value,
-    });
+    await api("PATCH", "/api/playlists/" + id, playlistFieldValues(id));
     setStatus("playlist-status", "Saved", "ok");
+    showToast("Playlist saved", "ok");
     await loadPlaylists();
   } catch (err) {
     setStatus("playlist-status", friendlyError(err), "error");
+    showErrorToast(err, "playlists");
   }
 });
 
@@ -2304,6 +2778,7 @@ el("ab-create-form").addEventListener("submit", async (event) => {
 // by kind, with undo for schedule entries.
 async function loadHistory() {
   setStatus("history-status", "Loading...");
+  loadBackups();
   try {
     const path = "/api/activity?limit=100" + (state.historyKind ? "&kind=" + encodeURIComponent(state.historyKind) : "");
     const entries = await api("GET", path);
@@ -2315,6 +2790,54 @@ async function loadHistory() {
     showErrorToast(err, "history");
   }
 }
+
+// Backups (item 98): snapshots taken automatically before big
+// writes; restoring one restores the local mirror only.
+function backupKeyDate(key) {
+  const raw = String(key || "");
+  const parsed = new Date(raw);
+  if (!isNaN(parsed.getTime()) && /\d{4}/.test(raw)) {
+    return parsed.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  return raw;
+}
+
+async function loadBackups() {
+  const box = el("backups-list");
+  if (!box) return;
+  try {
+    const backups = await api("GET", "/api/backups");
+    if (!backups || backups.length === 0) {
+      box.innerHTML = "<p class=\"muted-text\">No backups yet — one is taken automatically before any apply that touches more than 50 videos.</p>";
+      return;
+    }
+    box.innerHTML = backups.map((backup) =>
+      "<div class=\"backup-row\"><span class=\"backup-date\">" + escapeHTML(backupKeyDate(backup.key)) + "</span>" +
+      "<span class=\"pill\">" + (backup.videoCount || 0) + " videos</span>" +
+      "<button data-restore-backup=\"" + escapeHTML(backup.key) + "\" data-write>Restore local mirror</button></div>").join("");
+  } catch (err) {
+    box.innerHTML = "<p class=\"muted-text\">Backups could not be loaded.</p>";
+  }
+}
+
+el("backups-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-restore-backup]");
+  if (!button) return;
+  const key = button.dataset.restoreBackup;
+  if (!window.confirm("Restore this backup? It restores yt-manage's local records to the snapshot. " +
+    "Titles already changed on YouTube itself are NOT changed back by this — revert those per video with “Undo last rename” in the video drawer.")) return;
+  button.disabled = true;
+  try {
+    const data = await api("POST", "/api/backups/restore", { key });
+    showToast(data.note || ("Restored " + (data.restored || 0) + " local record(s)"), "ok");
+    setStatus("history-status", "Backup restored: " + (data.restored || 0) + " local record(s)", "ok");
+    state.videosLoaded = false;
+    loadHistory();
+  } catch (err) {
+    showErrorToast(err, "history");
+    button.disabled = false;
+  }
+});
 
 function historyDayLabel(iso) {
   const date = new Date(iso);
@@ -2328,7 +2851,7 @@ function historyDayLabel(iso) {
 function renderHistory(entries) {
   const box = el("history-list");
   if (entries.length === 0) {
-    box.innerHTML = "<div class=\"empty-state\"><h3>No activity yet</h3>" +
+    box.innerHTML = "<div class=\"empty-state\"><span class=\"state-art\" aria-hidden=\"true\">↩</span><h3>No activity yet</h3>" +
       "<p>Syncs, renames, schedules and setting changes are recorded here as they happen — across all accounts.</p></div>";
     return;
   }
@@ -2352,7 +2875,7 @@ function renderHistory(entries) {
       (entry.isUndone ? "<span class=\"history-note\">Undone</span>" : "") +
       "</span>" +
       (entry.canUndo && entry.kind === "schedule" && !entry.isUndone
-        ? "<button data-undo-activity=\"" + entry.id + "\">Undo schedule</button>" : "") +
+        ? "<button data-undo-activity=\"" + entry.id + "\" data-write>Undo schedule</button>" : "") +
       "</div>";
   });
   box.innerHTML = html;
@@ -2536,6 +3059,11 @@ function refreshRowFromData(row, key) {
 }
 
 async function saveSetting(row, setting) {
+  if (isReadOnly()) {
+    showErrorToast(new Error(READ_ONLY_HINT), "settings");
+    renderSettings();
+    return;
+  }
   const input = row.querySelector(".setting-input");
   let value;
   if (input.type === "checkbox") value = input.checked ? "true" : "false";
@@ -2635,6 +3163,11 @@ function renderPerAccountSettings() {
 }
 
 async function savePerAccount(row, accountId, key, value) {
+  if (isReadOnly()) {
+    showErrorToast(new Error(READ_ONLY_HINT), "settings");
+    renderPerAccountSettings();
+    return;
+  }
   clearSettingError(row);
   try {
     const data = await api("PUT", "/api/settings", { key, value: String(value), accountId });
@@ -2736,19 +3269,20 @@ async function loadAccounts() {
     const rows = [];
     accounts.forEach((account) => {
       if (!account.channels || account.channels.length === 0) {
-        rows.push("<tr><td>" + account.id + "</td><td>" + escapeHTML(account.label) +
+        rows.push("<tr><td>" + account.id + "</td><td>" + avatarHTML(account.label) + escapeHTML(account.label) +
           "</td><td colspan=\"4\">No channels</td></tr>");
         return;
       }
       account.channels.forEach((channel) => {
-        rows.push("<tr><td>" + account.id + "</td><td>" + escapeHTML(account.label) + "</td><td>" +
-          escapeHTML(channel.title) + "</td><td>" + escapeHTML(channel.ytChannelId) + "</td><td>" +
+        rows.push("<tr><td>" + account.id + "</td><td>" + avatarHTML(account.label) + escapeHTML(account.label) + "</td><td>" +
+          avatarHTML(channel.title) + escapeHTML(channel.title) + "</td><td>" + escapeHTML(channel.ytChannelId) + "</td><td>" +
           channel.subscriberCount + "</td><td>" + channel.videoCount + "</td></tr>");
       });
     });
     el("account-rows").innerHTML = rows.join("");
+    renderAccountHealth(accounts);
     el("accounts-empty").innerHTML = accounts.length === 0
-      ? "<div class=\"empty-state\"><h3>No accounts connected</h3>" +
+      ? "<div class=\"empty-state\"><span class=\"state-art\" aria-hidden=\"true\">◉</span><h3>No accounts connected</h3>" +
         "<p>Connect your first YouTube account from a terminal: <code>yt-manage account add</code> — it opens the Google consent flow, and the token is stored encrypted on this machine.</p></div>"
       : "";
     setStatus("account-status", accounts.length + " account(s)", "ok");
@@ -2757,9 +3291,229 @@ async function loadAccounts() {
   }
 }
 
+// Token health (item 96): how old each account's saved sign-in is
+// and whether it is nearing the ~7-day Testing-mode expiry.
+function renderAccountHealth(accounts) {
+  const box = el("accounts-health");
+  if (!box) return;
+  if (!accounts || accounts.length === 0) { box.innerHTML = ""; return; }
+  box.innerHTML = "<div class=\"card\"><h2>Token health</h2>" + accounts.map((account) => {
+    const updated = account.updatedAt ? new Date(account.updatedAt) : null;
+    let line;
+    if (!updated || isNaN(updated.getTime())) {
+      line = "<span class=\"muted-text\">Token age unknown — reconnect to refresh it.</span>";
+    } else {
+      const days = Math.floor((Date.now() - updated.getTime()) / 86400000);
+      const when = days <= 0 ? "today" : days === 1 ? "1 day ago" : days + " days ago";
+      line = days > 6
+        ? "<span class=\"health-warn\">⚠ Token saved " + when + " — Google Testing-mode tokens expire after about 7 days, so reconnect soon.</span>"
+        : "<span class=\"muted-text\">Token saved " + when + ".</span>";
+    }
+    return "<div class=\"health-row\">" + avatarHTML(account.label) +
+      "<span class=\"health-label\">" + escapeHTML(account.label || ("Account " + account.id)) + "</span>" +
+      line +
+      "<span class=\"health-action\">Reconnect: <code>yt-manage account add</code></span></div>";
+  }).join("") + "</div>";
+}
+
 el("accounts-load-btn").addEventListener("click", loadAccounts);
 
+// ------------------------------------------- keyboard map & palette
+// Full keyboard map (item 71): "g" then a letter navigates, "?"
+// opens the shortcut overlay, j/k walk the video list, shift+arrows
+// extend the selection. Ctrl/Cmd+K opens the command palette
+// (item 72). Typing targets are ignored (except Esc, handled by the
+// drawer/palette closers).
+const G_NAV = { h: "home", v: "videos", e: "episodes", p: "playlists", a: "accounts", c: "history", s: "settings" };
+let pendingGAt = 0;
+
+function shortcutsOpen() { return !el("shortcuts-overlay").classList.contains("hidden"); }
+function paletteOpen() { return !el("palette-overlay").classList.contains("hidden"); }
+
+function openShortcuts() { el("shortcuts-overlay").classList.remove("hidden"); el("shortcuts-close").focus(); }
+function closeShortcuts() { el("shortcuts-overlay").classList.add("hidden"); }
+el("shortcuts-close").addEventListener("click", closeShortcuts);
+el("shortcuts-overlay").addEventListener("click", (event) => {
+  if (event.target === el("shortcuts-overlay")) closeShortcuts();
+});
+
+const PALETTE_COMMANDS = [
+  { label: "Go to Home", run: () => navigate("home") },
+  { label: "Go to Videos", run: () => navigate("videos") },
+  { label: "Go to Episodes", run: () => navigate("episodes") },
+  { label: "Go to Playlists", run: () => navigate("playlists") },
+  { label: "Go to Accounts", run: () => navigate("accounts") },
+  { label: "Go to History", run: () => navigate("history") },
+  { label: "Go to Settings", run: () => navigate("settings") },
+  { label: "Sync now", run: () => runSync(el("sync-all-btn"), "sync-progress", "sync-result") },
+  { label: "Seed demo channel", run: () => el("demo-seed-btn").click() },
+  { label: "Clear demo channel", run: () => el("demo-clear-btn").click() },
+  { label: "Toggle density", run: () => el("density-toggle").click() },
+  { label: "Toggle theme (system / light / dark)", run: () => cycleTheme() },
+  { label: "Export settings", run: () => el("settings-export-btn").click() },
+  {
+    label: "Export audit CSV", run: () => {
+      const link = document.createElement("a");
+      link.href = "/api/activity/export";
+      link.setAttribute("download", "");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    },
+  },
+  { label: "Open keyboard shortcuts", run: () => openShortcuts() },
+];
+
+function fuzzyMatch(text, query) {
+  const hay = text.toLowerCase();
+  const needle = query.toLowerCase();
+  let hi = 0;
+  for (let ni = 0; ni < needle.length; ni++) {
+    hi = hay.indexOf(needle[ni], hi);
+    if (hi === -1) return false;
+    hi++;
+  }
+  return true;
+}
+
+function renderPalette() {
+  const query = el("palette-input").value.trim();
+  state.paletteItems = PALETTE_COMMANDS.filter((command) => !query || fuzzyMatch(command.label, query));
+  state.paletteIndex = Math.max(0, Math.min(state.paletteIndex, state.paletteItems.length - 1));
+  el("palette-list").innerHTML = state.paletteItems.map((command, index) =>
+    "<button class=\"palette-item" + (index === state.paletteIndex ? " is-active" : "") +
+    "\" role=\"option\" data-palette-index=\"" + index + "\">" + escapeHTML(command.label) + "</button>").join("") ||
+    "<p class=\"muted-text palette-empty\">No matching command</p>";
+}
+
+function openPalette() {
+  el("palette-overlay").classList.remove("hidden");
+  el("palette-input").value = "";
+  state.paletteIndex = 0;
+  renderPalette();
+  el("palette-input").focus();
+}
+
+function closePalette() { el("palette-overlay").classList.add("hidden"); }
+
+function runPaletteItem(index) {
+  const command = state.paletteItems[index];
+  closePalette();
+  if (command) command.run();
+}
+
+el("palette-input").addEventListener("input", () => { state.paletteIndex = 0; renderPalette(); });
+el("palette-input").addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    state.paletteIndex = Math.max(0, Math.min(state.paletteIndex + (event.key === "ArrowDown" ? 1 : -1), state.paletteItems.length - 1));
+    renderPalette();
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    runPaletteItem(state.paletteIndex);
+  }
+});
+el("palette-list").addEventListener("click", (event) => {
+  const item = event.target.closest("[data-palette-index]");
+  if (item) runPaletteItem(Number(item.dataset.paletteIndex));
+});
+el("palette-overlay").addEventListener("click", (event) => {
+  if (event.target === el("palette-overlay")) closePalette();
+});
+
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (paletteOpen()) closePalette(); else openPalette();
+    return;
+  }
+  if (event.key === "Escape") {
+    if (paletteOpen()) { closePalette(); return; }
+    if (shortcutsOpen()) { closeShortcuts(); return; }
+  }
+  if (isTypingTarget(event.target)) return;
+  if (event.key === "?") {
+    event.preventDefault();
+    if (shortcutsOpen()) closeShortcuts(); else openShortcuts();
+    return;
+  }
+  if (paletteOpen() || shortcutsOpen()) return;
+  const now = Date.now();
+  if (pendingGAt && now - pendingGAt <= 700) {
+    const target = G_NAV[event.key.toLowerCase()];
+    pendingGAt = 0;
+    if (target) {
+      event.preventDefault();
+      navigate(target);
+    }
+    return;
+  }
+  pendingGAt = 0;
+  if (event.key.toLowerCase() === "g" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    pendingGAt = now;
+    return;
+  }
+  if (state.section === "videos") {
+    if (event.key === "j" || event.key === "k") {
+      setActiveVideo(state.activeVideoIndex + (event.key === "j" ? 1 : -1));
+      return;
+    }
+    // Shift+arrows extend the selection; the plain-arrow handler has
+    // already moved the active row by the time this listener runs.
+    if (event.shiftKey && (event.key === "ArrowDown" || event.key === "ArrowUp") && state.activeVideoIndex >= 0) {
+      const anchor = state.selectionAnchor >= 0 ? state.selectionAnchor : state.activeVideoIndex;
+      selectVideoRange(anchor, state.activeVideoIndex, true);
+      if (state.selectionAnchor < 0) state.selectionAnchor = anchor;
+      renderVideos();
+    }
+  }
+});
+
+// ------------------------------------------------ read-only guards
+// While read-only mode is on (item 95), write controls look
+// disabled and any activation is stopped with an explanation.
+const READ_ONLY_HINT = "Read-only mode is on — writes are blocked. Turn it off with: yt-manage settings set read_only false";
+
+document.addEventListener("click", (event) => {
+  if (!isReadOnly()) return;
+  if (event.target.closest("[data-write]")) {
+    event.preventDefault();
+    event.stopPropagation();
+    showToast(READ_ONLY_HINT, "error");
+  }
+}, true);
+
+document.addEventListener("submit", (event) => {
+  if (!isReadOnly()) return;
+  if (["schedule-form", "playlist-create-form", "ab-create-form", "video-edit-form"].indexOf(event.target.id) !== -1) {
+    event.preventDefault();
+    event.stopPropagation();
+    showToast(READ_ONLY_HINT, "error");
+  }
+}, true);
+
+// Cold start & prefetch (items 79, 80): once the first status has
+// painted, warm the section endpoints during idle time so the
+// first navigation to each screen opens instantly.
+function prefetchSections() {
+  const warm = () => {
+    api("GET", "/api/schedules").catch(() => {});
+    api("GET", "/api/accounts").then((accounts) => {
+      if (!state.accounts) state.accounts = accounts;
+    }).catch(() => {});
+    api("GET", "/api/settings").catch(() => {});
+    const scope = LS.get("scopeChannel", "");
+    if (scope) {
+      api("GET", "/api/episodes?channel=" + encodeURIComponent(scope)).catch(() => {});
+      api("GET", "/api/playlists?channel=" + encodeURIComponent(scope)).catch(() => {});
+    }
+  };
+  if (window.requestIdleCallback) window.requestIdleCallback(warm, { timeout: 2500 });
+  else setTimeout(warm, 800);
+}
+
 // ------------------------------------------------------------------- init
+applyTheme();
 applyDensity(LS.get("density", "comfortable"));
 applySidebar(LS.get("sidebarCollapsed", false));
 el("video-sort").value = LS.get("videoSort", "newest");
@@ -2768,9 +3522,17 @@ setToggleChips(false, false, false);
 
 (async function init() {
   await loadStatus();
+  if (state.status && !state.status.appVersion) {
+    try {
+      const version = await api("GET", "/api/version");
+      if (version && version.version) el("footer-version").textContent = "yt-manage v" + version.version;
+    } catch (err) { /* footer keeps the plain name */ }
+  }
+  renderRecents();
   loadSavedSearches();
   loadRecipes();
   updateBulkPreview();
+  prefetchSections();
   const parsed = parseHash();
   if (parsed) {
     if (parsed.section === "videos") applyVideoParams(parsed.params);

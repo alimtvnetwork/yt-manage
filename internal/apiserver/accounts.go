@@ -24,7 +24,8 @@ func (s *Server) handleListAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		dto := accountDTO{
 			ID: account.ID, Label: account.Label, ChannelID: account.ChannelID,
-			CreatedAt: formatTime(account.CreatedAt), Channels: make([]channelDTO, 0, len(channels)),
+			CreatedAt: formatTime(account.CreatedAt), UpdatedAt: formatTime(account.UpdatedAt),
+			Channels: make([]channelDTO, 0, len(channels)),
 		}
 		for _, channel := range channels {
 			dto.Channels = append(dto.Channels, toChannelDTO(channel))
@@ -47,6 +48,7 @@ type syncResultDTO struct {
 	ChannelTitle  string `json:"channelTitle"`
 	Videos        int    `json:"videos"`
 	Playlists     int    `json:"playlists"`
+	Comments      int    `json:"comments"`
 	UnitsEstimate int    `json:"unitsEstimate"`
 	IsIncremental bool   `json:"isIncremental"`
 	Error         string `json:"error,omitempty"`
@@ -91,11 +93,11 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		}
 		response.Results = append(response.Results, syncResultDTO{
 			AccountID: result.AccountID, ChannelTitle: result.ChannelTitle,
-			Videos: result.Videos, Playlists: result.Playlists,
+			Videos: result.Videos, Playlists: result.Playlists, Comments: result.Comments,
 			UnitsEstimate: result.UnitsEstimate, IsIncremental: result.IsIncremental,
 		})
 		s.addQuota(result.UnitsEstimate)
-		s.recordActivity("sync", fmt.Sprintf("Synced %s: %d videos, %d playlists", result.ChannelTitle, result.Videos, result.Playlists), "")
+		s.recordActivity("sync", fmt.Sprintf("Synced %s: %d videos, %d playlists, %d comments", result.ChannelTitle, result.Videos, result.Playlists, result.Comments), "")
 	}
 	writeOK(w, response)
 }

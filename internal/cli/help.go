@@ -29,6 +29,10 @@ Commands:
   peer      Sync the local cache with another yt-manage instance
   llm       Export training data for LLMs
   settings  Read and change settings (same names as the UI Settings screen)
+  completion  Print a shell completion script (bash, zsh, powershell)
+
+Aliases: acc=account, cfg=settings, ep=episode, find=search, sched=schedule,
+ui=serve.
   update    Check for and apply yt-manage updates
   version   Print the yt-manage version
 

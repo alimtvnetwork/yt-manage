@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>yt-manage</title>
+<script>
+  // Set the theme before first paint so there is no flash (item 81).
+  try {
+    var pref = JSON.parse(localStorage.getItem("ytm.theme") || "\"system\"");
+    if (pref !== "light" && pref !== "dark") {
+      pref = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    document.documentElement.dataset.theme = pref;
+  } catch (err) { /* app.js applies the theme on load instead */ }
+</script>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -27,7 +37,7 @@
       <div class="side-heading">Saved searches</div>
       <div id="saved-search-list"></div>
     </div>
-    <button id="sidebar-collapse" class="collapse-btn" title="Collapse sidebar">«</button>
+    <button id="sidebar-collapse" class="collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar">«</button>
   </aside>
 
   <div class="content">
@@ -51,6 +61,11 @@
     </header>
 
     <div id="banner-area"></div>
+    <div id="readonly-banner" class="banner ro-banner hidden" role="alert">
+      <span class="banner-text"><strong>Read-only mode — writes are blocked.</strong>
+      You can browse everything, but syncs, edits and settings changes are disabled.
+      Turn it off with <code>yt-manage settings set read_only false</code>.</span>
+    </div>
 
     <main>
       <!-- HOME -->
@@ -78,7 +93,7 @@
           <div class="wizard-step" data-step="2">
             <h3>2. First sync</h3>
             <p>Mirror your channels, videos and playlists into the local database. Search then costs no YouTube API quota.</p>
-            <button id="wizard-sync-btn" class="primary">Run first sync</button>
+            <button id="wizard-sync-btn" class="primary" data-write>Run first sync</button>
             <div id="wizard-sync-progress" class="status-line"></div>
             <div id="wizard-sync-result"></div>
             <button class="wiz-skip" data-wiz-skip="2">Skip this step</button>
@@ -103,6 +118,12 @@
             <button id="checklist-dismiss">Dismiss</button>
           </div>
           <ul id="checklist-list" class="checklist"></ul>
+          <p class="muted-text hidden" id="checklist-comments-line"></p>
+        </div>
+
+        <div class="card hidden" id="recent-card">
+          <h2>Jump back in</h2>
+          <div id="recent-list"></div>
         </div>
 
         <div class="card hidden" id="whatnext-card">
@@ -114,8 +135,8 @@
           <h2>Demo channel <span class="pill demo-pill">DEMO</span></h2>
           <p>Demo data is sample content stored locally so you can explore search, episodes and scheduling before connecting a real account. It is clearly separate from your real channels and can be removed at any time.</p>
           <div class="row">
-            <button id="demo-seed-btn" class="primary">Load demo channel</button>
-            <button id="demo-clear-btn">Remove demo data</button>
+            <button id="demo-seed-btn" class="primary" data-write>Load demo channel</button>
+            <button id="demo-clear-btn" data-write>Remove demo data</button>
           </div>
           <div class="status-line" id="demo-status"></div>
         </div>
@@ -134,7 +155,7 @@
       <section id="section-videos" class="panel">
         <div class="toolbar">
           <div class="search-box">
-            <input id="video-q" type="search" placeholder="Search titles and descriptions" autocomplete="off">
+            <input id="video-q" type="search" placeholder="Search titles and descriptions" autocomplete="off" aria-label="Search videos">
             <div id="search-dropdown" class="search-dropdown hidden"></div>
           </div>
           <input id="video-channel" type="number" min="1" placeholder="Channel ID">
@@ -145,7 +166,7 @@
             <option value="views">Most views</option>
           </select>
           <button id="video-search-btn" class="primary">Search</button>
-          <button id="video-save-search-btn">Save search</button>
+          <button id="video-save-search-btn" data-write>Save search</button>
           <button id="search-all-btn" aria-pressed="false">Search everywhere</button>
           <input id="pattern-finder" type="text" placeholder="Pattern finder (regex highlight)">
         </div>
@@ -169,7 +190,7 @@
             <input id="bulk-replacement" type="text" placeholder="Replacement">
             <input id="bulk-desc-template" type="text" placeholder="Description template ({description} {title} {n})" title="Description template ({description} {title} {n})">
             <input id="bulk-start" type="number" value="1" class="narrow" title="Start index">
-            <button id="bulk-plan-btn">Plan bulk edit</button>
+            <button id="bulk-plan-btn" data-write>Plan bulk edit</button>
           </div>
           <div class="bulk-subrow">
             <span class="bulk-label">Insert token:</span>
@@ -181,30 +202,37 @@
           <div class="bulk-subrow">
             <span class="bulk-label">Recipe:</span>
             <select id="recipe-select"><option value="">No recipe selected</option></select>
-            <button id="recipe-save-btn">Save recipe</button>
-            <button id="recipe-delete-btn">Delete recipe</button>
+            <button id="recipe-save-btn" data-write>Save recipe</button>
+            <button id="recipe-delete-btn" data-write>Delete recipe</button>
           </div>
           <div id="bulk-preview" class="bulk-preview"></div>
         </div>
         <div id="bulk-plan" class="plan-box hidden">
           <pre id="bulk-summary"></pre>
+          <p class="scope-statement" id="bulk-scope"></p>
           <table class="grid">
             <thead><tr><th>Include</th><th>YT ID</th><th>Old title</th><th>New title</th><th>Description</th><th>Warnings</th><th>Result</th></tr></thead>
             <tbody id="bulk-changes"></tbody>
           </table>
+          <div id="bulk-preflight" class="preflight hidden"></div>
           <div class="row plan-actions">
-            <button id="bulk-apply-first-btn">Apply first 5</button>
-            <button id="bulk-apply-btn" class="primary">Apply included (0)</button>
-            <button id="bulk-apply-all-btn">Apply all changes (0)</button>
-            <button id="bulk-retry-btn" class="hidden">Retry failed only</button>
+            <button id="bulk-apply-first-btn" data-write>Apply first 5</button>
+            <button id="bulk-apply-btn" class="primary" data-write>Apply included (0)</button>
+            <button id="bulk-apply-all-btn" data-write>Apply all changes (0)</button>
+            <button id="bulk-retry-btn" class="hidden" data-write>Retry failed only</button>
           </div>
+        </div>
+        <div id="selection-bar" class="selection-bar hidden">
+          <span id="selection-count">0 selected</span>
+          <button id="sel-rename-btn" class="primary" data-write>Rename selected</button>
+          <button id="sel-clear-btn">Clear selection</button>
         </div>
         <div id="video-empty" class="empty-state hidden"></div>
         <div class="table-wrap">
           <table class="grid" id="video-table">
             <thead>
               <tr>
-                <th><input type="checkbox" id="video-select-all"></th>
+                <th><input type="checkbox" id="video-select-all" aria-label="Select all videos"></th>
                 <th>ID</th><th>Title</th><th>Visibility</th><th>Views</th><th>Comments</th><th>Published</th>
               </tr>
             </thead>
@@ -218,7 +246,7 @@
         <div class="toolbar">
           <input id="episode-channel" type="number" min="1" placeholder="Channel ID">
           <button id="episode-load-btn" class="primary">Load episodes</button>
-          <button id="episode-merge-btn" disabled>Merge selected (0)</button>
+          <button id="episode-merge-btn" data-write disabled>Merge selected (0)</button>
         </div>
         <div class="status-line" id="episode-status"></div>
         <div id="episode-list"></div>
@@ -241,7 +269,9 @@
             <div id="schedule-plan-warnings"></div>
             <div id="schedule-plan-entries"></div>
           </div>
-          <button type="submit" class="primary">Apply schedule</button>
+          <p class="scope-statement" id="schedule-scope"></p>
+          <div id="schedule-preflight" class="preflight hidden"></div>
+          <button type="submit" class="primary" data-write>Apply schedule</button>
           <div class="status-line" id="schedule-status"></div>
           <ul id="schedule-result"></ul>
         </form>
@@ -287,7 +317,7 @@
               <option value="public">public</option>
             </select>
           </label>
-          <button type="submit" class="primary">Create</button>
+          <button type="submit" class="primary" data-write>Create</button>
           <div class="status-line" id="playlist-create-status"></div>
         </form>
       </section>
@@ -315,7 +345,7 @@
           <label>Video ID <input id="ab-new-video" type="number" min="1"></label>
           <label>Variant A <input id="ab-new-a" type="text"></label>
           <label>Variant B <input id="ab-new-b" type="text"></label>
-          <button type="submit" class="primary">Create test</button>
+          <button type="submit" class="primary" data-write>Create test</button>
           <div class="status-line" id="ab-create-status"></div>
         </form>
       </section>
@@ -324,7 +354,7 @@
       <section id="section-accounts" class="panel">
         <div class="toolbar">
           <button id="accounts-load-btn" class="primary">Load accounts</button>
-          <button id="sync-all-btn">Sync all</button>
+          <button id="sync-all-btn" data-write>Sync all</button>
           <span id="sync-spinner" class="spinner hidden"></span>
           <span id="sync-progress" class="status-line"></span>
         </div>
@@ -337,12 +367,21 @@
           </table>
         </div>
         <div id="sync-result" class="plan-box hidden"></div>
+        <div id="accounts-health"></div>
+        <div class="warn-box">
+          <strong>About token expiry:</strong> if your Google Cloud OAuth consent screen is still in
+          <strong>Testing mode</strong>, Google expires refresh tokens after about <strong>7 days</strong> and
+          accounts silently stop syncing. To fix it for good, publish the app:
+          <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">Google Cloud Console → OAuth consent screen → Publish app</a>.
+          Reconnect an account any time from a terminal with <code>yt-manage account add</code> — sign-in happens there, not in this page.
+        </div>
       </section>
 
       <!-- HISTORY -->
       <section id="section-history" class="panel">
         <div class="toolbar">
           <button id="history-load-btn" class="primary">Refresh history</button>
+          <a class="btn-link" href="/api/activity/export" download>Export audit CSV</a>
         </div>
         <div class="chips" id="history-kind-chips">
           <button class="chip is-active" data-kind="">All</button>
@@ -353,6 +392,13 @@
         </div>
         <div class="status-line" id="history-status"></div>
         <div id="history-list"></div>
+        <div class="card" id="backups-card">
+          <h2>Backups</h2>
+          <p class="muted-text">Automatic snapshots taken before big writes. Restoring one puts the
+          <strong>local records</strong> back; titles already changed on YouTube itself are reverted
+          per video with “Undo last rename” in the video drawer.</p>
+          <div id="backups-list"><p class="muted-text">Loading…</p></div>
+        </div>
       </section>
 
       <!-- SETTINGS -->
@@ -360,7 +406,7 @@
         <div class="toolbar">
           <input id="settings-search" type="search" placeholder="Search settings by name, key or group…" autocomplete="off">
           <button id="settings-export-btn">Export settings</button>
-          <button id="settings-import-btn">Import settings</button>
+          <button id="settings-import-btn" data-write>Import settings</button>
           <input id="settings-import-file" type="file" accept=".json,application/json" class="hidden">
         </div>
         <div class="status-line" id="settings-status"></div>
@@ -388,11 +434,44 @@
               <option value="dense">Dense</option>
             </select>
           </label>
+          <label>Theme
+            <select id="set-theme">
+              <option value="system">System (follow OS)</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
           <label class="check"><input id="set-sidebar-collapsed" type="checkbox"> Collapse sidebar to icons</label>
           <p class="muted-text">Preferences apply instantly and are remembered in this browser only — they are not part of the exported settings.</p>
         </div>
+        <div class="card" id="settings-privacy">
+          <h2>Privacy</h2>
+          <p>Everything yt-manage mirrors — channels, videos, playlists, comments, schedules and
+          history — is stored <strong>only on this machine</strong>, in the data directory shown
+          above. Nothing is uploaded to any yt-manage server; there is no account with us and no
+          analytics or telemetry.</p>
+          <p>Your Google sign-in tokens are stored <strong>encrypted at rest (AES-256-GCM)</strong>
+          in that same data directory, and are only ever used to talk to Google on your behalf.</p>
+          <p>The only network calls this app makes are:</p>
+          <ul class="privacy-list">
+            <li><strong>Google OAuth &amp; YouTube Data API</strong> (googleapis.com) — sign-in,
+            syncing your channels, and the edits you approve.</li>
+            <li><strong>YouTube thumbnails</strong> (i.ytimg.com) — your browser loads video
+            thumbnails directly from YouTube's image CDN.</li>
+          </ul>
+          <p>Nothing else is sent anywhere else — no third-party services, no cloud sync, no
+          tracking pixels.</p>
+        </div>
       </section>
     </main>
+
+    <footer class="app-footer">
+      <span id="footer-version">yt-manage</span>
+      <span class="footer-sep">·</span>
+      <span>Data directory: <span id="footer-datadir">…</span></span>
+      <span class="footer-sep">·</span>
+      <span>Press <kbd>?</kbd> for keyboard shortcuts, <kbd>Ctrl</kbd>+<kbd>K</kbd> for commands</span>
+    </footer>
   </div>
 </div>
 
@@ -400,7 +479,11 @@
 <aside id="video-drawer" class="drawer" aria-hidden="true">
   <div class="drawer-head">
     <h2>Video <span id="edit-video-id"></span></h2>
-    <button id="drawer-close" title="Close (Esc)">✕</button>
+    <button id="drawer-close" title="Close (Esc)" aria-label="Close video details">✕</button>
+  </div>
+  <div class="drawer-thumb">
+    <img id="drawer-thumb-img" alt="" loading="lazy">
+    <span class="thumb-fallback" id="drawer-thumb-fallback"></span>
   </div>
   <dl class="kv">
     <dt>Visibility</dt><dd id="drawer-visibility"></dd>
@@ -413,18 +496,47 @@
     <label>Title <input id="edit-title" type="text"></label>
     <label>Description <textarea id="edit-description" rows="6"></textarea></label>
     <div class="row">
-      <button type="submit" class="primary">Save via YouTube API</button>
+      <button type="submit" class="primary" data-write>Save via YouTube API</button>
       <button type="button" id="edit-cancel">Close</button>
     </div>
     <div class="status-line" id="edit-status"></div>
   </form>
   <h3>Rename history</h3>
-  <button id="drawer-undo-btn" class="hidden">Undo last rename</button>
+  <button id="drawer-undo-btn" class="hidden" data-write>Undo last rename</button>
   <div id="drawer-history" class="history-list"><p class="muted-text">No recorded renames yet</p></div>
 </aside>
 
 <div id="progress-centre" class="progress-centre hidden"></div>
 <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
+<div id="shortcuts-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="overlay-card">
+    <div class="card-head">
+      <h2>Keyboard shortcuts</h2>
+      <button id="shortcuts-close" aria-label="Close shortcuts">✕</button>
+    </div>
+    <table class="shortcut-table">
+      <tbody>
+        <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd></td><td>Command palette</td></tr>
+        <tr><td><kbd>?</kbd></td><td>This shortcuts list</td></tr>
+        <tr><td><kbd>/</kbd></td><td>Focus video search</td></tr>
+        <tr><td><kbd>g</kbd> then <kbd>h</kbd> / <kbd>v</kbd> / <kbd>e</kbd> / <kbd>p</kbd> / <kbd>a</kbd> / <kbd>c</kbd> / <kbd>s</kbd></td><td>Go to Home / Videos / Episodes / Playlists / Accounts / History / Settings</td></tr>
+        <tr><td><kbd>↑</kbd> / <kbd>↓</kbd> or <kbd>k</kbd> / <kbd>j</kbd></td><td>Move through search suggestions, then through video results</td></tr>
+        <tr><td><kbd>Shift</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd></td><td>Extend the video selection</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>Open the active video (or apply the highlighted suggestion)</td></tr>
+        <tr><td><kbd>Shift</kbd> + click, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + click</td><td>Select a range of videos / toggle one video</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close palette, shortcuts, drawer; from the list, return to search</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="palette-overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Command palette">
+  <div class="overlay-card palette-card">
+    <input id="palette-input" type="text" placeholder="Type a command…" autocomplete="off" aria-label="Command search">
+    <div id="palette-list" class="palette-list" role="listbox"></div>
+  </div>
+</div>
 
 <script src="/app.js"></script>
 </body>

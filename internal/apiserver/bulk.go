@@ -181,6 +181,11 @@ func (s *Server) handleBulkEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	selected, remaining := splitPlanChanges(stored.plan, body.OnlyIDs)
+	selectedIDs := make([]uint, 0, len(selected))
+	for _, change := range selected {
+		selectedIDs = append(selectedIDs, change.VideoID)
+	}
+	s.snapshotBeforeApply(selectedIDs, fmt.Sprintf("bulk apply of %d videos", len(selected)))
 	results, err := s.applyChangesGrouped(r, selected)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)

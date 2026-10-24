@@ -25,6 +25,9 @@ type MailSettings struct {
 type Settings struct {
 	DailyQuotaBudget int          `json:"daily_quota_budget"`
 	ServerAddr       string       `json:"server_addr"`
+	DefaultAccount   int          `json:"default_account"`
+	DefaultChannel   int          `json:"default_channel"`
+	ReadOnly         bool         `json:"read_only"`
 	Mail             MailSettings `json:"mail"`
 }
 

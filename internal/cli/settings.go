@@ -24,7 +24,8 @@ Subcommands:
   export          Print the settings as JSON (secrets excluded)
   import <file>   Import settings JSON produced by export ('-' = stdin)
 
-Keys: daily_quota_budget, server_addr, mail.smtp_host, mail.smtp_port,
+Keys: daily_quota_budget, server_addr, default_account, default_channel,
+read_only, mail.smtp_host, mail.smtp_port,
 mail.imap_host, mail.imap_port, mail.username, mail.password.
 `
 

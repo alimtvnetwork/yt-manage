@@ -79,6 +79,7 @@ func runSyncRun(args []string) int {
 	}
 
 	var targets []model.Account
+	*accountFlag = withDefaultAccount(*accountFlag)
 	if *accountFlag != 0 {
 		account, err := store.Accounts.GetByID(*accountFlag)
 		if err != nil {
@@ -114,11 +115,12 @@ func runSyncRun(args []string) int {
 			result.ChannelTitle,
 			strconv.Itoa(result.Videos),
 			strconv.Itoa(result.Playlists),
+			strconv.Itoa(result.Comments),
 			strconv.Itoa(result.UnitsEstimate),
 			mode,
 		})
 	}
-	printTable(os.Stdout, []string{"Account", "Channel", "Videos", "Playlists", "Units est.", "Mode"}, rows)
+	printTable(os.Stdout, []string{"Account", "Channel", "Videos", "Playlists", "Comments", "Units est.", "Mode"}, rows)
 	if hasFailure {
 		return 1
 	}

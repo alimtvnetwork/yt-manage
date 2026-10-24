@@ -182,10 +182,15 @@ the ORM, and one repository per aggregate:
 
 ## Status
 
-Scaffolding phase: repository, coding-guideline install, spec and plan
-land first; implementation follows in waves (core CLI and database,
-OAuth and sync, search and batch edit, episodes and scheduling,
-API/UI/peer/installer).
+Implemented and in daily-driver hardening. All 16 CLI command groups
+are wired end to end (account, sync, video, search, rename, episode,
+schedule, playlist, comment, mail, serve, peer, llm, settings,
+completion, update, version): loopback OAuth with AES-256-GCM token
+storage, split SQLite databases with an FTS5 search mirror, dry-run
+batch edits, episode grouping with cadence scheduling, comment
+mirroring on sync, a REST API with the embedded browser UI, and a
+self-update path. The Spec 29 campaign (200 UX features in 8 waves)
+is tracked in `02-spec/21-app/29-user-experience-200-features/`.
 
 ## Install
 

@@ -12,6 +12,7 @@ import (
 	"github.com/alimtvnetwork/yt-manage/internal/model"
 	"github.com/alimtvnetwork/yt-manage/internal/oauth"
 	"github.com/alimtvnetwork/yt-manage/internal/repo"
+	"github.com/alimtvnetwork/yt-manage/internal/version"
 )
 
 // Wave 1 (spec 29, items 1-25) endpoints: app status for onboarding
@@ -66,6 +67,9 @@ type statusResponse struct {
 	Checklist     statusChecklist    `json:"checklist"`
 	QuotaUsed     int                `json:"quotaUsed"`
 	QuotaBudget   int                `json:"quotaBudget"`
+	ReadOnly      bool               `json:"readOnly"`
+	AppVersion    string             `json:"appVersion"`
+	CommentsSync  string             `json:"commentsLastSyncAt"`
 }
 
 // oauthSource reports where the Google OAuth client comes from:
@@ -184,6 +188,16 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	response.QuotaUsed, _ = s.quotaUsedToday()
 	if cfg, cfgErr := config.LoadSettings(s.home); cfgErr == nil {
 		response.QuotaBudget = cfg.DailyQuotaBudget
+	}
+	response.ReadOnly = s.ReadOnly()
+	response.AppVersion = version.Version
+	for _, account := range accounts {
+		state, stateErr := s.store.SyncStates.Get(account.ID, "comments")
+		if stateErr == nil && state != nil && state.LastRunAt != nil {
+			if response.CommentsSync == "" || state.LastRunAt.Format(time.RFC3339) > response.CommentsSync {
+				response.CommentsSync = state.LastRunAt.Format(time.RFC3339)
+			}
+		}
 	}
 	writeOK(w, response)
 }

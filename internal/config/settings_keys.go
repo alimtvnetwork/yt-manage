@@ -23,6 +23,9 @@ func SettingKeys() []SettingKey {
 	return []SettingKey{
 		{Key: "daily_quota_budget", Label: "Daily API quota budget", Group: "General", Type: "int", Default: "10000"},
 		{Key: "server_addr", Label: "UI / API listen address", Group: "General", Type: "string", Default: ":8765"},
+		{Key: "default_account", Label: "Default account (CLI)", Group: "General", Type: "int", Default: "0"},
+		{Key: "default_channel", Label: "Default channel (CLI)", Group: "General", Type: "int", Default: "0"},
+		{Key: "read_only", Label: "Read-only mode (block all writes)", Group: "General", Type: "bool", Default: "false"},
 		{Key: "mail.smtp_host", Label: "SMTP host", Group: "Mail", Type: "string", Default: ""},
 		{Key: "mail.smtp_port", Label: "SMTP port", Group: "Mail", Type: "port", Default: "0"},
 		{Key: "mail.imap_host", Label: "IMAP host", Group: "Mail", Type: "string", Default: ""},
@@ -50,6 +53,12 @@ func (s *Settings) GetByKey(key string) (string, bool) {
 		return strconv.Itoa(s.DailyQuotaBudget), true
 	case "server_addr":
 		return s.ServerAddr, true
+	case "default_account":
+		return strconv.Itoa(s.DefaultAccount), true
+	case "default_channel":
+		return strconv.Itoa(s.DefaultChannel), true
+	case "read_only":
+		return strconv.FormatBool(s.ReadOnly), true
 	case "mail.smtp_host":
 		return s.Mail.SMTPHost, true
 	case "mail.smtp_port":
@@ -92,6 +101,10 @@ func (s *Settings) SetByKey(key string, value string) error {
 		if key == "server_addr" && !strings.Contains(value, ":") {
 			return fmt.Errorf("%s must look like host:port (for example :8765)", def.Label)
 		}
+	case "bool":
+		if _, err := strconv.ParseBool(strings.TrimSpace(value)); err != nil {
+			return fmt.Errorf("%s must be true or false", def.Label)
+		}
 	}
 	switch key {
 	case "daily_quota_budget":
@@ -99,6 +112,15 @@ func (s *Settings) SetByKey(key string, value string) error {
 		s.DailyQuotaBudget = parsed
 	case "server_addr":
 		s.ServerAddr = value
+	case "default_account":
+		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
+		s.DefaultAccount = parsed
+	case "default_channel":
+		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
+		s.DefaultChannel = parsed
+	case "read_only":
+		parsed, _ := strconv.ParseBool(strings.TrimSpace(value))
+		s.ReadOnly = parsed
 	case "mail.smtp_host":
 		s.Mail.SMTPHost = value
 	case "mail.smtp_port":

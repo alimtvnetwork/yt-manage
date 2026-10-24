@@ -38,9 +38,21 @@ func commandGroups() []commandGroup {
 		{"peer", runPeer},
 		{"llm", runLLM},
 		{"settings", runSettings},
+		{"completion", runCompletion},
 		{"update", runUpdate},
 		{"version", runVersion},
 	}
+}
+
+// commandAliases maps short names for the daily path onto real
+// command groups (spec 29, item 77).
+var commandAliases = map[string]string{
+	"acc":   "account",
+	"cfg":   "settings",
+	"ep":    "episode",
+	"find":  "search",
+	"sched": "schedule",
+	"ui":    "serve",
 }
 
 // Run dispatches args to a command group and returns the process exit
@@ -60,8 +72,12 @@ func Run(args []string) int {
 		fmt.Fprintf(os.Stderr, "yt-manage: %v\n", err)
 		return 1
 	}
+	name := args[0]
+	if alias, isAlias := commandAliases[name]; isAlias {
+		name = alias
+	}
 	for _, group := range commandGroups() {
-		if group.name == args[0] {
+		if group.name == name {
 			return group.run(args[1:])
 		}
 	}

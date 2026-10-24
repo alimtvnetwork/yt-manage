@@ -7,21 +7,54 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/alimtvnetwork/yt-manage/internal/batch"
+	"github.com/alimtvnetwork/yt-manage/internal/config"
 	"github.com/alimtvnetwork/yt-manage/internal/repo"
 )
 
 // Server is the yt-manage API server.
 type Server struct {
-	store *repo.Store
-	home  string
-	key   []byte
-	mux   *http.ServeMux
-	mu    sync.Mutex
-	plans map[string]storedPlan
+	store         *repo.Store
+	home          string
+	key           []byte
+	mux           *http.ServeMux
+	mu            sync.Mutex
+	plans         map[string]storedPlan
+	forceReadOnly bool
+}
+
+// SetForceReadOnly pins the server into read-only mode regardless
+// of the read_only setting (used by `serve --read-only`).
+func (s *Server) SetForceReadOnly(force bool) {
+	s.forceReadOnly = force
+}
+
+// ReadOnly reports whether writes are currently blocked: forced by
+// the serve flag or enabled via the read_only setting (item 95).
+func (s *Server) ReadOnly() bool {
+	if s.forceReadOnly {
+		return true
+	}
+	cfg, err := config.LoadSettings(s.home)
+	return err == nil && cfg.ReadOnly
+}
+
+// readOnlyMiddleware rejects every non-GET /api call with a plain
+// message while read-only mode is on. The UI assets stay readable
+// so the app can explain itself.
+func (s *Server) readOnlyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead &&
+			strings.HasPrefix(r.URL.Path, "/api/") && s.ReadOnly() {
+			writeError(w, http.StatusForbidden, fmt.Errorf("read-only mode is on: writes are blocked. Turn it off with: yt-manage settings set read_only false"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // storedPlan is a bulk-edit plan held between the plan and apply
@@ -48,7 +81,7 @@ func New(store *repo.Store, home string, key []byte) *Server {
 
 // ListenAndServe serves the API and UI on addr until it fails.
 func (s *Server) ListenAndServe(addr string) error {
-	return http.ListenAndServe(addr, s.mux)
+	return http.ListenAndServe(addr, s.readOnlyMiddleware(s.mux))
 }
 
 // registerRoutes wires every route using Go 1.22 method patterns.
@@ -96,6 +129,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/activity", s.handleListActivity)
 	s.mux.HandleFunc("POST /api/activity/{id}/undo", s.handleUndoActivity)
 	s.mux.HandleFunc("POST /api/videos/{id}/undo-title", s.handleUndoTitle)
+	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+	s.mux.HandleFunc("POST /api/preflight", s.handlePreflight)
+	s.mux.HandleFunc("GET /api/activity/export", s.handleActivityExport)
+	s.mux.HandleFunc("GET /api/backups", s.handleListBackups)
+	s.mux.HandleFunc("POST /api/backups/restore", s.handleRestoreBackup)
 	s.mux.HandleFunc("POST /api/peer/push", s.handlePeerPush)
 	s.mux.HandleFunc("POST /api/peer/pull", s.handlePeerPull)
 	s.mux.HandleFunc("GET /", s.handleIndex)
