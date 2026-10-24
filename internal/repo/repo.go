@@ -7,6 +7,7 @@ import (
 // Store aggregates every repository. It is the only data-access
 // entry point used by services; all GORM access lives in this package.
 type Store struct {
+	dbs            *db.DBs
 	Accounts       AccountRepository
 	Channels       ChannelRepository
 	Videos         VideoRepository
@@ -27,6 +28,7 @@ type Store struct {
 // NewStore builds a Store backed by the four split databases.
 func NewStore(dbs *db.DBs) *Store {
 	return &Store{
+		dbs:            dbs,
 		Accounts:       &accountRepository{db: dbs.Accounts},
 		Channels:       &channelRepository{db: dbs.Accounts},
 		Videos:         &videoRepository{db: dbs.Content},

@@ -10,6 +10,7 @@ import (
 // log (system.db).
 type ActivityRepository interface {
 	Record(kind string, summary string, detail string) (*model.ActivityLog, error)
+	RecordWithActor(kind string, summary string, detail string, actor string) (*model.ActivityLog, error)
 	List(limit int, kind string) ([]model.ActivityLog, error)
 	GetByID(id uint) (*model.ActivityLog, error)
 	MarkUndone(id uint) error
@@ -20,7 +21,13 @@ type activityRepository struct {
 }
 
 func (r *activityRepository) Record(kind string, summary string, detail string) (*model.ActivityLog, error) {
-	entry := &model.ActivityLog{Kind: kind, Summary: summary, Detail: detail}
+	return r.RecordWithActor(kind, summary, detail, "")
+}
+
+// RecordWithActor is Record with the acting machine or peer
+// recorded (spec 29 item 178: activity attribution).
+func (r *activityRepository) RecordWithActor(kind string, summary string, detail string, actor string) (*model.ActivityLog, error) {
+	entry := &model.ActivityLog{Kind: kind, Summary: summary, Detail: detail, Actor: actor}
 	if err := r.db.Create(entry).Error; err != nil {
 		return nil, err
 	}

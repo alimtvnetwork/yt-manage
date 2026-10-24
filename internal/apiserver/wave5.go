@@ -216,6 +216,10 @@ type channelDefaults struct {
 	// is created from a series.
 	PlaylistTitleTemplate       string `json:"playlistTitleTemplate"`
 	PlaylistDescriptionTemplate string `json:"playlistDescriptionTemplate"`
+	// Timezone (spec 29 item 196): the channel's IANA zone, so
+	// publish times can be shown in the channel's zone and the
+	// viewer's zone side by side. Empty = the viewer's zone.
+	Timezone string `json:"timezone"`
 }
 
 func defaultsKey(channelID uint) string {
@@ -253,6 +257,12 @@ func (s *Server) handlePutChannelDefaults(w http.ResponseWriter, r *http.Request
 	if body.CadenceDays < 0 || body.CadenceDays > 365 {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("cadenceDays must be between 0 and 365"))
 		return
+	}
+	if body.Timezone != "" {
+		if _, tzErr := time.LoadLocation(body.Timezone); tzErr != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("timezone must be an IANA name like Asia/Kuala_Lumpur: %v", tzErr))
+			return
+		}
 	}
 	if err := s.setJSONSetting(defaultsKey(id), body); err != nil {
 		writeError(w, http.StatusInternalServerError, err)

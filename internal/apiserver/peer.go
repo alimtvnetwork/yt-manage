@@ -55,6 +55,7 @@ func (s *Server) handlePeerPush(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.recordActivityAs("peer", fmt.Sprintf("Peer %s pushed: %d videos, %d playlists applied", r.Header.Get("X-YTM-Peer"), result.VideosApplied, result.PlaylistsApplied), "", "peer "+r.Header.Get("X-YTM-Peer"))
 	writeOK(w, result)
 }
 

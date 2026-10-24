@@ -22,13 +22,14 @@
   <aside class="sidebar" id="sidebar">
     <div class="brand">yt-manage</div>
     <nav class="side-nav" id="side-nav">
-      <button class="nav-item" data-section="home"><span class="nav-icon">⌂</span><span class="nav-label">Home</span></button>
+      <button class="nav-item" data-section="home"><span class="nav-icon">⌂</span><span class="nav-label">Home</span><span class="badge" id="badge-whatsnew"></span></button>
       <button class="nav-item" data-section="suggestions"><span class="nav-icon">✦</span><span class="nav-label">Suggestions</span><span class="badge" id="badge-suggestions"></span></button>
       <button class="nav-item" data-section="videos"><span class="nav-icon">▶</span><span class="nav-label">Videos</span><span class="badge" id="badge-videos"></span></button>
       <button class="nav-item" data-section="episodes"><span class="nav-icon">▦</span><span class="nav-label">Episodes</span><span class="badge" id="badge-episodes"></span></button>
       <button class="nav-item" data-section="automation"><span class="nav-icon">⚡</span><span class="nav-label">Automation</span><span class="badge" id="badge-proposals"></span></button>
       <button class="nav-item" data-section="commentcentre"><span class="nav-icon">❝</span><span class="nav-label">Comment Centre</span></button>
       <button class="nav-item" data-section="schedules"><span class="nav-icon">◷</span><span class="nav-label">Schedules</span><span class="badge" id="badge-schedules"></span></button>
+      <button class="nav-item" data-section="focus"><span class="nav-icon">◎</span><span class="nav-label">Focus</span></button>
       <button class="nav-item" data-section="playlists"><span class="nav-icon">☰</span><span class="nav-label">Playlists</span><span class="badge" id="badge-playlists"></span></button>
       <button class="nav-item" data-section="insights"><span class="nav-icon">◔</span><span class="nav-label">Insights</span></button>
       <button class="nav-item" data-section="comments"><span class="nav-icon">✎</span><span class="nav-label">Comments</span><span class="badge" id="badge-comments"></span></button>
@@ -66,6 +67,10 @@
           <select id="scope-channel"><option value="">All channels</option></select>
         </label>
         <button id="density-toggle" title="Toggle row density">Density: comfortable</button>
+        <div class="avatar-wrap">
+          <button id="avatar-btn" class="avatar-btn" title="Account menu" aria-haspopup="true" aria-expanded="false">?</button>
+          <div id="avatar-menu" class="avatar-menu hidden" role="menu"></div>
+        </div>
       </div>
     </header>
 
@@ -75,12 +80,21 @@
       You can browse everything, but syncs, edits and settings changes are disabled.
       Turn it off with <code>yt-manage settings set read_only false</code>.</span>
     </div>
+    <div id="share-banner" class="banner share-banner hidden" role="alert">
+      <span class="banner-text"><strong>You are viewing through a read-only share link</strong>
+      <span id="share-banner-expiry"></span> — changes are blocked for this view; the owner can revoke the link in Settings.</span>
+    </div>
 
     <main>
       <!-- HOME -->
       <section id="section-home" class="panel">
         <div id="account-focus-strip" class="account-strip hidden"></div>
         <div id="missed-banner"></div>
+        <div class="row home-customise-row" id="home-customise-row">
+          <button id="home-customise-btn">Customise home</button>
+          <button id="home-customise-done" class="primary hidden">Done customising</button>
+          <span class="muted-text" id="home-customise-hint"></span>
+        </div>
         <div id="home-stats" class="stat-grid"></div>
 
         <div class="card hidden" id="wizard-card">
@@ -150,6 +164,32 @@
           <div id="whatnext-list"></div>
         </div>
 
+        <div class="card hidden" id="whatsnew-card">
+          <div class="card-head">
+            <h2>What's new</h2>
+            <button id="whatsnew-seen-btn">Mark all seen</button>
+          </div>
+          <div id="whatsnew-list"></div>
+        </div>
+
+        <div class="card hidden" id="offline-queue-card">
+          <h2>Offline queue</h2>
+          <p class="muted-text">These applies failed because YouTube could not be reached. Review the change-set, then retry when you are back online — nothing was applied yet.</p>
+          <div id="offline-queue-list"></div>
+        </div>
+
+        <div class="card" id="tours-card">
+          <h2>Guided tours</h2>
+          <p class="muted-text">Short click-through tours over the demo channel — about two minutes each, replayable any time.</p>
+          <div id="tours-demo-note"></div>
+          <div class="row">
+            <button data-tour="rename">First rename</button>
+            <button data-tour="schedule">First schedule</button>
+            <button data-tour="abtest">First A/B test</button>
+          </div>
+          <div class="status-line" id="tours-status"></div>
+        </div>
+
         <div class="card" id="demo-card">
           <h2>Demo channel <span class="pill demo-pill">DEMO</span></h2>
           <p>Demo data is sample content stored locally so you can explore search, episodes and scheduling before connecting a real account. It is clearly separate from your real channels and can be removed at any time.</p>
@@ -198,7 +238,7 @@
           <button id="video-search-btn" class="primary">Search</button>
           <button id="video-save-search-btn" data-write>Save search</button>
           <button id="search-all-btn" aria-pressed="false">Search everywhere</button>
-          <input id="pattern-finder" type="text" placeholder="Pattern finder (regex highlight)">
+          <input id="pattern-finder" type="text" placeholder="Pattern finder (regex highlight)" data-teach-key="pattern" data-teach="Type a regular expression — matching videos are highlighted as you type. Clear the box to stop highlighting.">
         </div>
         <div id="search-all-results" class="search-all hidden"></div>
         <div class="chips" id="visibility-chips">
@@ -222,9 +262,9 @@
         <div class="bulkbar">
           <div class="bulk-main">
             <input id="bulk-template" type="text" placeholder="Template, e.g. {title} #{n}">
-            <input id="bulk-regex" type="text" placeholder="Regex">
+            <input id="bulk-regex" type="text" placeholder="Regex" data-teach-key="regex" data-teach="Regex find-and-replace runs over titles only, and nothing changes until you apply the previewed plan.">
             <input id="bulk-replacement" type="text" placeholder="Replacement">
-            <input id="bulk-desc-template" type="text" placeholder="Description template ({description} {title} {n})" title="Description template ({description} {title} {n})">
+            <input id="bulk-desc-template" type="text" placeholder="Description template ({description} {title} {n})" title="Description template ({description} {title} {n})" data-teach-key="desc-template" data-teach="Description template: {description} keeps the current text; {title} and {n} work like the title template.">
             <input id="bulk-start" type="number" value="1" class="narrow" title="Start index">
             <button id="bulk-plan-btn" data-write>Plan bulk edit</button>
           </div>
@@ -401,7 +441,7 @@
               </label>
             </fieldset>
             <div class="row">
-              <button type="button" id="rule-dry-run-btn">Dry run</button>
+              <button type="button" id="rule-dry-run-btn" data-teach-key="dry-run" data-teach="Dry run tests this rule against your current library — it shows what would happen and changes nothing.">Dry run</button>
               <button type="submit" class="primary" data-write>Save rule</button>
               <button type="button" id="rule-reset-btn">Clear form</button>
             </div>
@@ -451,6 +491,7 @@
           <button id="calendar-prev-btn">← Prev month</button>
           <strong id="calendar-title"></strong>
           <button id="calendar-next-btn">Next month →</button>
+          <button id="schedules-print-btn">Print</button>
         </div>
         <div class="status-line" id="schedules-status"></div>
         <div class="card" id="missed-card">
@@ -495,6 +536,7 @@
           <input id="playlist-channel" type="number" min="1" placeholder="Channel ID">
           <button id="playlist-load-btn" class="primary">Load playlists</button>
           <button id="playlist-dup-btn">Check duplicates</button>
+          <button id="playlists-print-btn">Print checklists</button>
         </div>
         <div class="status-line" id="playlist-status"></div>
         <div id="playlist-dup-results" class="card hidden"></div>
@@ -645,6 +687,54 @@
             <div class="status-line" id="goal-status"></div>
           </form>
         </div>
+
+        <div class="card" id="insights-wrapup-card">
+          <div class="card-head">
+            <h2>Annual wrap-up</h2>
+            <span class="row">
+              <label class="scope-picker">Channel
+                <select id="wrapup-channel"><option value="">Choose a channel…</option></select>
+              </label>
+              <label class="scope-picker">Year
+                <input id="wrapup-year" type="number" min="2005" step="1" class="narrow">
+              </label>
+              <button id="wrapup-load-btn" class="primary">Build wrap-up</button>
+            </span>
+          </div>
+          <p class="muted-text">A year in review for one channel, generated locally from the mirror — yours to keep or share as a page.</p>
+          <div class="status-line" id="wrapup-status"></div>
+          <div id="wrapup-result"><p class="muted-text">Pick a channel and a year, then build the wrap-up.</p></div>
+        </div>
+      </section>
+
+      <!-- FOCUS -->
+      <section id="section-focus" class="panel">
+        <div class="focus-head">
+          <h2 class="focus-title">Focus — today's publish run</h2>
+          <button id="focus-exit-btn">Exit focus</button>
+        </div>
+        <p class="muted-text" id="focus-scope-note"></p>
+        <div class="status-line" id="focus-status"></div>
+        <div class="focus-block">
+          <h3>Going live within the hour</h3>
+          <div id="focus-live"><p class="muted-text">Loading…</p></div>
+        </div>
+        <div class="focus-block">
+          <h3>Publishing today</h3>
+          <div id="focus-today"><p class="muted-text">Loading…</p></div>
+        </div>
+        <div class="focus-block">
+          <h3>Pin checklist — first comments still to pin in Studio</h3>
+          <div id="focus-pins"><p class="muted-text">Loading…</p></div>
+        </div>
+        <div class="focus-block">
+          <h3>First comments still missing on today's videos</h3>
+          <div id="focus-comments"><p class="muted-text">Loading…</p></div>
+        </div>
+        <div class="focus-block">
+          <h3>Missed publishes</h3>
+          <div id="focus-missed"><p class="muted-text">Loading…</p></div>
+        </div>
       </section>
 
       <!-- COMMENTS -->
@@ -793,6 +883,24 @@
             <label>First-comment template <textarea id="cd-comment-template" rows="3" placeholder="Tokens: {title} {episode} {series} {channel}"></textarea></label>
             <label>Playlist title template <input id="cd-playlist-title-template" type="text" placeholder="Tokens: {series} {channel} {count}"></label>
             <label>Playlist description template <textarea id="cd-playlist-desc-template" rows="2" placeholder="Tokens: {series} {channel} {count}"></textarea></label>
+            <label>Channel time zone <input id="cd-timezone" type="text" list="tz-list" placeholder="e.g. Asia/Kuala_Lumpur — blank means the viewer's zone">
+              <datalist id="tz-list">
+                <option value="Asia/Kuala_Lumpur"></option>
+                <option value="Asia/Singapore"></option>
+                <option value="Asia/Dhaka"></option>
+                <option value="Asia/Kolkata"></option>
+                <option value="Asia/Dubai"></option>
+                <option value="Europe/London"></option>
+                <option value="Europe/Berlin"></option>
+                <option value="America/New_York"></option>
+                <option value="America/Chicago"></option>
+                <option value="America/Denver"></option>
+                <option value="America/Los_Angeles"></option>
+                <option value="Australia/Sydney"></option>
+                <option value="Pacific/Auckland"></option>
+                <option value="UTC"></option>
+              </datalist>
+              <span class="muted-text">When set, publish times show both this zone and your own — no silent conversions.</span></label>
             <fieldset class="rule-group">
               <legend>Post-publish pipeline</legend>
               <label class="check"><input id="cd-pipeline-comment" type="checkbox"> Post the first comment when a scheduled video goes live</label>
@@ -879,6 +987,53 @@
           </div>
           <div class="status-line" id="bundle-status"></div>
         </div>
+        <div class="card" id="db-backups-card">
+          <h2>Database backups</h2>
+          <p class="muted-text">Automatic local backups of the four yt-manage databases (accounts, content, planning, system) on a cadence, kept alongside your data. Restoring is a two-step, stop-the-server operation: staging a set here changes nothing until you swap the files with yt-manage stopped.</p>
+          <label>Backup cadence
+            <select id="db-backup-cadence">
+              <option value="off">Off</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </label>
+          <label>Sets to keep <input id="db-backup-keep" type="number" min="1" step="1" value="4"></label>
+          <div class="row">
+            <button id="db-backup-save" class="primary" data-write>Save backup schedule</button>
+            <button id="db-backup-now" data-write>Back up now</button>
+          </div>
+          <div class="status-line" id="db-backup-status"></div>
+          <div id="db-backup-list"><p class="muted-text">Loading…</p></div>
+          <div id="db-restore-note" class="warn-box hidden"></div>
+        </div>
+        <div class="card" id="share-card">
+          <h2>Share a read-only link (LAN)</h2>
+          <p class="muted-text">Give a second person on your local network a read-only view of this app. The link carries a token and expires on its own; anyone using it can browse but cannot change anything.</p>
+          <label>Link expires after
+            <select id="share-hours">
+              <option value="1">1 hour</option>
+              <option value="6">6 hours</option>
+              <option value="24" selected>24 hours</option>
+              <option value="72">3 days</option>
+              <option value="168">7 days</option>
+            </select>
+          </label>
+          <div class="row">
+            <button id="share-create-btn" class="primary" data-write>Create share link</button>
+            <button id="share-revoke-btn" data-write>Revoke link</button>
+          </div>
+          <div id="share-link-box" class="hidden">
+            <label>Share link <span class="row"><input id="share-link-input" type="text" readonly><button id="share-copy-btn">Copy link</button></span></label>
+            <p class="muted-text" id="share-link-note"></p>
+          </div>
+          <p class="muted-text" id="share-state"></p>
+          <div class="status-line" id="share-status"></div>
+        </div>
+        <div class="card" id="sidebar-card">
+          <h2>Sidebar</h2>
+          <p class="muted-text">Reorder or hide sidebar sections — remembered in this browser only. Settings can be hidden too: it stays reachable from the account (avatar) menu in the header, from the command palette (Ctrl+K), and with the keyboard shortcut <kbd>g</kbd> then <kbd>s</kbd>.</p>
+          <div id="sidebar-controls"><p class="muted-text">Loading…</p></div>
+        </div>
         <div class="card" id="settings-per-account-card">
           <h2>Per-account overrides</h2>
           <p class="muted-text">These apply to one account only. An account with notifications off and a sync interval of 0 inherits the global behaviour.</p>
@@ -910,6 +1065,8 @@
             </select>
           </label>
           <label class="check"><input id="set-sidebar-collapsed" type="checkbox"> Collapse sidebar to icons</label>
+          <label class="check"><input id="set-celebrations" type="checkbox" checked> Celebration moments (a quiet toast when a goal is reached or a series is fully scheduled)</label>
+          <label class="check"><input id="set-accent-channel" type="checkbox" checked> Accent colour follows the scoped channel's account colour</label>
           <p class="muted-text">Preferences apply instantly and are remembered in this browser only — they are not part of the exported settings.</p>
         </div>
         <div class="card" id="settings-privacy">
@@ -939,6 +1096,8 @@
       <span>Data directory: <span id="footer-datadir">…</span></span>
       <span class="footer-sep">·</span>
       <span>Press <kbd>?</kbd> for keyboard shortcuts, <kbd>Ctrl</kbd>+<kbd>K</kbd> for commands</span>
+      <span class="footer-sep">·</span>
+      <button id="footer-feedback-btn" class="footer-link-btn">This screen confused me</button>
     </footer>
   </div>
 </div>
@@ -985,6 +1144,7 @@
       <h2>Keyboard shortcuts</h2>
       <button id="shortcuts-close" aria-label="Close shortcuts">✕</button>
     </div>
+    <div id="shortcuts-untried" class="shortcuts-untried hidden"></div>
     <table class="shortcut-table">
       <tbody>
         <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd></td><td>Command palette</td></tr>
@@ -1005,6 +1165,44 @@
   <div class="overlay-card palette-card">
     <input id="palette-input" type="text" placeholder="Type a command…" autocomplete="off" aria-label="Command search">
     <div id="palette-list" class="palette-list" role="listbox"></div>
+  </div>
+</div>
+
+<div id="help-backdrop" class="drawer-backdrop hidden"></div>
+<aside id="help-drawer" class="drawer help-drawer" aria-hidden="true" aria-label="Help">
+  <div class="drawer-head">
+    <h2 id="help-title">Help</h2>
+    <button id="help-close" title="Close help (Esc)" aria-label="Close help">✕</button>
+  </div>
+  <div class="help-tabs" role="tablist">
+    <button data-help-tab="guide" class="chip is-active">Guide</button>
+    <button data-help-tab="examples" class="chip">Examples</button>
+  </div>
+  <div id="help-body"></div>
+  <div id="help-examples" class="hidden"></div>
+  <div class="help-feedback">
+    <h3>Still stuck?</h3>
+    <button id="help-feedback-btn">This screen confused me</button>
+    <div id="feedback-box" class="hidden">
+      <p class="muted-text">This report holds counts and settings only — no video titles, no email addresses, no tokens. Copy it into a message to whoever helps you.</p>
+      <textarea id="feedback-text" rows="9" readonly></textarea>
+      <div class="row"><button id="feedback-copy-btn">Copy report</button></div>
+    </div>
+  </div>
+</aside>
+
+<div id="teach-tip" class="teach-tip hidden" role="status"></div>
+
+<div id="tour-overlay" class="tour-overlay hidden">
+  <div class="tour-ring" id="tour-ring"></div>
+  <div class="tour-popover" id="tour-popover">
+    <div class="tour-step-label" id="tour-step-label"></div>
+    <p id="tour-text"></p>
+    <div class="row">
+      <button id="tour-back-btn">Back</button>
+      <button id="tour-next-btn" class="primary">Next</button>
+      <button id="tour-end-btn">End tour</button>
+    </div>
   </div>
 </div>
 

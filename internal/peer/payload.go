@@ -9,6 +9,7 @@ import (
 
 	"github.com/alimtvnetwork/yt-manage/internal/model"
 	"github.com/alimtvnetwork/yt-manage/internal/repo"
+	"github.com/alimtvnetwork/yt-manage/internal/version"
 )
 
 // VideoDTO is the wire form of one mirrored video. Times are
@@ -49,9 +50,17 @@ type PlaylistDTO struct {
 
 // Payload is the full cache exchange body: every mirrored video and
 // playlist of the sender.
+// PayloadSchemaVersion is the wire schema of Payload. It is
+// bumped when the shape changes incompatibly, so a peer on a
+// different schema can be warned about before sync (spec 29
+// item 180: version-skew warnings).
+const PayloadSchemaVersion = 1
+
 type Payload struct {
-	Videos    []VideoDTO    `json:"videos"`
-	Playlists []PlaylistDTO `json:"playlists"`
+	AppVersion    string        `json:"appVersion"`
+	SchemaVersion int           `json:"schemaVersion"`
+	Videos        []VideoDTO    `json:"videos"`
+	Playlists     []PlaylistDTO `json:"playlists"`
 }
 
 // Result summarises one applied payload: how many videos and
@@ -101,8 +110,10 @@ func BuildPayloadFor(store *repo.Store, keep map[string]bool) (*Payload, error) 
 		return nil, fmt.Errorf("list channels: %w", err)
 	}
 	payload := &Payload{
-		Videos:    []VideoDTO{},
-		Playlists: []PlaylistDTO{},
+		AppVersion:    version.Version,
+		SchemaVersion: PayloadSchemaVersion,
+		Videos:        []VideoDTO{},
+		Playlists:     []PlaylistDTO{},
 	}
 	for _, channel := range channels {
 		if keep != nil && !keep[channel.YTChannelID] {

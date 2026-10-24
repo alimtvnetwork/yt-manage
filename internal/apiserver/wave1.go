@@ -71,6 +71,8 @@ type statusResponse struct {
 	AppVersion    string             `json:"appVersion"`
 	CommentsSync  string             `json:"commentsLastSyncAt"`
 	AutoSync      autoSyncStatusDTO  `json:"autoSync"`
+	ShareMode     bool               `json:"shareMode"`
+	ShareExpires  string             `json:"shareExpiresAt"`
 }
 
 // oauthSource reports where the Google OAuth client comes from:
@@ -191,6 +193,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		response.QuotaBudget = cfg.DailyQuotaBudget
 	}
 	response.ReadOnly = s.ReadOnly()
+	if shareActive, shareExpires := s.shareStateFor(r); shareActive {
+		response.ShareMode = true
+		response.ShareExpires = shareExpires
+		response.ReadOnly = true
+	}
 	response.AppVersion = version.Version
 	response.AutoSync = s.autoSyncStatus()
 	for _, account := range accounts {

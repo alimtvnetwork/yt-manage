@@ -1194,13 +1194,23 @@ func (s *Server) handlePeerPullFrom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := &peer.Client{}
-	result, err := client.PullFrom(r.Context(), s.store, id)
+	payload, err := client.FetchPayload(r.Context(), s.store, id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	s.notePeerVersion(id, payload)
+	result, err := peer.ApplyPayload(s.store, payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	s.recordActivity("peer", fmt.Sprintf("Pulled from peer %d: %d videos, %d playlists applied", id, result.VideosApplied, result.PlaylistsApplied), "")
-	writeOK(w, result)
+	writeOK(w, map[string]interface{}{
+		"videosApplied": result.VideosApplied, "videosSkipped": result.VideosSkipped,
+		"playlistsApplied": result.PlaylistsApplied, "itemsApplied": result.ItemsApplied,
+		"versionNote": s.peerVersionWarning(id),
+	})
 }
 
 // peerConflict is one differing record of POST
@@ -1233,6 +1243,7 @@ func (s *Server) handlePeerConflicts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	s.notePeerVersion(id, remote)
 	conflicts := []peerConflict{}
 	for _, dto := range remote.Videos {
 		local, getErr := s.store.Videos.GetByYTID(dto.YtVideoId)

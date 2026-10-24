@@ -69,6 +69,13 @@ const state = {
   peers: [],
   importBundle: null,
   moveSeries: null,
+  // Wave 8 (items 176-200)
+  whatsNew: [],
+  offlineQueue: [],
+  wrapup: null,
+  tour: null,
+  homeCustomising: false,
+  helpSection: "home",
 };
 
 const SECTIONS = {
@@ -79,6 +86,7 @@ const SECTIONS = {
   automation: "Automation",
   commentcentre: "Comment Centre",
   schedules: "Schedules",
+  focus: "Focus",
   playlists: "Playlists",
   insights: "Insights",
   comments: "Comments",
@@ -101,6 +109,39 @@ const LS = {
     try { localStorage.setItem("ytm." + key, JSON.stringify(value)); } catch (err) { /* storage unavailable */ }
   },
 };
+
+// ------------------------------------------------- strings (wave 8)
+// Language-ready UI (item 197): every string the Wave 8 surfaces
+// show lives in this one catalog, so a translation only ever has
+// to touch this object. Dates and numbers in the new panels go
+// through Intl formatters (NF / DF below) for the same reason.
+// The pre-Wave-8 UI predates the catalog and still carries its
+// strings inline — it migrates panel by panel, not all at once.
+const STRINGS = {
+  helpButton: "? Help",
+  helpTitleSuffix: " — help",
+  helpAbout: "What this screen does",
+  helpActions: "Key actions",
+  helpCli: "Same thing in the CLI",
+  helpExamplesTab: "Examples",
+  helpGuideTab: "Guide",
+  shareBanner: "You are viewing through a read-only share link",
+  focusLoading: "Loading…",
+  focusNoChannel: "Pick a channel in the header scope picker to build today's publish run.",
+  focusAllClear: "Nothing here — clear.",
+  wrapupDownload: "Download as page",
+  offlineRetry: "Retry now",
+  offlineDiscard: "Discard",
+  backupNow: "Back up now",
+  stageRestore: "Stage restore",
+  tourEnd: "End tour",
+  tourNext: "Next",
+  tourBack: "Back",
+  tourFinish: "Finish",
+};
+
+const NF = new Intl.NumberFormat();
+const DF_DATE = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
 
 function el(id) { return document.getElementById(id); }
 
@@ -182,6 +223,24 @@ function showToast(message, kind) {
   return toast;
 }
 
+// Error-to-help linking (item 185): when an error matches a known
+// problem shape, the toast offers the help panel that fixes it.
+const ERROR_HELP_PATTERNS = [
+  { re: /smtp|imap|mail (is )?not configured|mailbox/i, section: "settings", label: "See mail setup help" },
+  { re: /read-only|read only/i, section: "settings", label: "See help: read-only mode" },
+  { re: /quota/i, section: "settings", label: "See help: quota" },
+  { re: /peer/i, section: "peers", label: "See help: peers" },
+  { re: /token|sign-in|sign in|unauthor|credential/i, section: "accounts", label: "See help: accounts & tokens" },
+];
+
+function helpForError(err) {
+  const text = err && err.message ? err.message : String(err || "");
+  for (const pattern of ERROR_HELP_PATTERNS) {
+    if (pattern.re.test(text)) return pattern;
+  }
+  return null;
+}
+
 function showErrorToast(err, where) {
   const raw = (err && err.message) || String(err || "Unknown error");
   const toast = showToast(friendlyError(err), "error");
@@ -190,8 +249,16 @@ function showErrorToast(err, where) {
   extra.className = "toast-extra";
   extra.innerHTML = "<div class=\"toast-actions\">" +
     "<button class=\"toast-details-btn\">Details</button>" +
-    "<button class=\"toast-copy-btn\">Copy report</button></div>" +
+    "<button class=\"toast-copy-btn\">Copy report</button>" +
+    "<button class=\"toast-help-btn hidden\">See help</button></div>" +
     "<pre class=\"toast-details hidden\"></pre>";
+  const helpMatch = helpForError(err);
+  if (helpMatch) {
+    const helpBtn = extra.querySelector(".toast-help-btn");
+    helpBtn.textContent = helpMatch.label;
+    helpBtn.classList.remove("hidden");
+    helpBtn.addEventListener("click", () => openHelp(helpMatch.section));
+  }
   const details = extra.querySelector(".toast-details");
   details.textContent = raw;
   extra.querySelector(".toast-details-btn").addEventListener("click", () => {
@@ -645,6 +712,9 @@ function onEnterSection(section) {
     loadHomeSuggestions();
     renderAccountFocusStrip();
     loadMissedBanner();
+    loadOfflineQueue();
+    renderWhatsNew();
+    renderToursCard();
   }
   if (section === "suggestions") loadInbox();
   if (section === "videos" && !state.videosLoaded) loadVideos();
@@ -661,6 +731,7 @@ function onEnterSection(section) {
     loadTimeline();
     loadMissedPanel();
   }
+  if (section === "focus") loadFocus();
   if (section === "comments") loadComments();
   if (section === "accounts") loadAccounts();
   if (section === "inbox") loadMailInbox();
@@ -669,6 +740,9 @@ function onEnterSection(section) {
   if (section === "settings") {
     loadSettings();
     loadNotifyPrefs();
+    loadDBBackupCard();
+    loadShareCard();
+    renderSidebarControls();
   }
 }
 
@@ -700,6 +774,7 @@ function applyScope(channelId, reload) {
   LS.set("scopeChannel", channelId || "");
   el("scope-channel").value = channelId || "";
   el("wizard-channel").value = channelId || "";
+  updateAccentForScope(channelId);
   if (channelId) {
     el("video-channel").value = channelId;
     el("episode-channel").value = channelId;
@@ -740,6 +815,8 @@ function setBadge(id, count) {
 function renderStatus(status) {
   renderQuota(status);
   renderReadOnly();
+  renderShareState(status);
+  renderAvatar();
   // Footer shows the real version from the binary + data dir (item 99).
   el("footer-version").textContent = "yt-manage" + (status.appVersion ? " v" + status.appVersion : "");
   el("footer-datadir").textContent = status.dataDir || "";
@@ -1330,12 +1407,14 @@ el("video-rows").addEventListener("click", (event) => {
   const box = event.target.closest(".video-check");
   if (box) {
     state.pendingCheckShift = !!event.shiftKey;
+    if (event.shiftKey || event.ctrlKey || event.metaKey) noteShortcutUse("clickselect");
     return;
   }
   const row = event.target.closest("tr[data-id]");
   if (!row) return;
   const index = state.videos.findIndex((v) => v.id === Number(row.dataset.id));
   if (index === -1) return;
+  if (event.ctrlKey || event.metaKey || event.shiftKey) noteShortcutUse("clickselect");
   if (event.ctrlKey || event.metaKey) {
     setVideoSelectedAt(index, !state.selected.has(state.videos[index].id));
     state.selectionAnchor = index;
@@ -1478,6 +1557,7 @@ function setActiveVideo(index) {
 }
 
 function openActiveVideo() {
+  noteShortcutUse("enter");
   const index = state.activeVideoIndex >= 0 ? state.activeVideoIndex : 0;
   if (state.videos[index]) openDrawer(state.videos[index]);
 }
@@ -1489,6 +1569,7 @@ function isTypingTarget(target) {
 document.addEventListener("keydown", (event) => {
   if (event.key === "/" && !isTypingTarget(event.target)) {
     event.preventDefault();
+    noteShortcutUse("slash");
     if (state.section !== "videos") navigate("videos");
     el("video-q").focus();
     el("video-q").select();
@@ -1519,6 +1600,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     if (event.target !== el("video-q") && isTypingTarget(event.target)) return;
     event.preventDefault();
+    noteShortcutUse("arrows");
     hideSearchDropdown();
     setActiveVideo(state.activeVideoIndex + (event.key === "ArrowDown" ? 1 : -1));
     return;
@@ -1662,7 +1744,16 @@ function openDrawer(video) {
   }
   el("drawer-views").textContent = String(video.viewCount || 0);
   el("drawer-comments").textContent = String(video.commentCount || 0);
-  el("drawer-published").textContent = video.publishedAt || "";
+  el("drawer-published").textContent = video.publishedAt ? fmtDualTime(video.publishedAt, "") : "";
+  if (video.publishedAt && video.channelId) {
+    // Time-zone honesty (item 196): once the channel's own zone is
+    // known, show the publish time in both zones, labelled.
+    fetchChannelDefaults(video.channelId).then((defaults) => {
+      if (el("video-edit-form").dataset.videoId === String(video.id)) {
+        el("drawer-published").textContent = fmtDualTime(video.publishedAt, defaults ? defaults.timezone : "");
+      }
+    });
+  }
   el("drawer-yt-link").href = "https://www.youtube.com/watch?v=" + encodeURIComponent(video.ytVideoId || "");
   el("edit-title").value = video.title || "";
   el("edit-description").value = video.description || "";
@@ -2624,6 +2715,7 @@ async function doApplySchedule() {
       (data.skippedPublic ? ", " + data.skippedPublic + " public skipped" : ""), "ok");
     el("schedule-result").innerHTML = (data.entries || []).map((entry) =>
       "<li>" + escapeHTML(entry.ytVideoId) + " → " + escapeHTML(entry.publishAt) + "</li>").join("");
+    checkSeriesCelebration();
     state.schedulePlan = null;
     el("schedule-plan-preview").classList.add("hidden");
     el("schedule-scope").textContent = "";
@@ -2816,7 +2908,7 @@ async function loadPlaylists() {
       "<div class=\"pl-detail hidden\" id=\"pl-reorder-" + playlist.id + "\">" +
       "<div class=\"preview-label\">Reorder — preview first</div>" +
       "<p class=\"muted-text\">Reordering rebuilds the playlist through the YouTube API: every item is removed and re-inserted in the new order, at roughly 50 quota units per item touched.</p>" +
-      "<div class=\"row\"><label>Order by <select data-pl-reorder-mode=\"" + playlist.id + "\">" +
+      "<div class=\"row\"><label>Order by <select data-teach-key=\"pl-reorder\" data-teach=\"Preview shows the new order first — applying rewrites the playlist order on YouTube.\" data-pl-reorder-mode=\"" + playlist.id + "\">" +
       "<option value=\"episode\">Episode number</option><option value=\"date\">Publish date</option></select></label>" +
       "<button data-pl-reorder-preview=\"" + playlist.id + "\">Preview order</button>" +
       "<button class=\"primary hidden\" data-pl-reorder-apply=\"" + playlist.id + "\" data-write>Apply reorder</button></div>" +
@@ -3339,6 +3431,7 @@ function normalizeDefaults(data) {
     watchSeries: Array.isArray(d.watchSeries) ? d.watchSeries : [],
     playlistTitleTemplate: d.playlistTitleTemplate || "",
     playlistDescriptionTemplate: d.playlistDescriptionTemplate || "",
+    timezone: d.timezone || "",
   };
 }
 
@@ -3381,6 +3474,8 @@ function fillChannelSelects() {
     ["compare-a", "Choose a channel…"],
     ["compare-b", "Choose a channel…"],
     ["timeline-channel", "Choose a channel…"],
+    // Wave 8 select (item 200).
+    ["wrapup-channel", "Choose a channel…"],
   ];
   plain.forEach(([id, placeholder]) => {
     const select = el(id);
@@ -4526,6 +4621,7 @@ async function loadChannelDefaultsCard() {
   el("cd-comment-template").value = defaults.commentTemplate;
   el("cd-playlist-title-template").value = defaults.playlistTitleTemplate;
   el("cd-playlist-desc-template").value = defaults.playlistDescriptionTemplate;
+  el("cd-timezone").value = defaults.timezone || "";
   el("cd-pipeline-comment").checked = defaults.pipelineComment;
   el("cd-pipeline-email").checked = defaults.pipelineEmail;
   try {
@@ -4560,6 +4656,7 @@ el("cd-save-btn").addEventListener("click", async () => {
     commentTemplate: el("cd-comment-template").value,
     playlistTitleTemplate: el("cd-playlist-title-template").value,
     playlistDescriptionTemplate: el("cd-playlist-desc-template").value,
+    timezone: el("cd-timezone").value.trim(),
     pipelineComment: el("cd-pipeline-comment").checked,
     pipelineEmail: el("cd-pipeline-email").checked,
     pipelinePlaylistId: Number(el("cd-pipeline-playlist").value || 0),
@@ -4727,7 +4824,7 @@ function renderABResults(id, data) {
   // Auto-schedule form (item 144): switch / mid snapshot / end.
   html += "<h4>Auto-schedule</h4>" +
     "<p class=\"muted-text\">The automation loop applies each step when its time comes, while the app is serving. Leave a step empty to clear it.</p>" +
-    "<label>Switch to variant B <input type=\"datetime-local\" id=\"ab-sched-switch-" + id + "\" value=\"" +
+    "<label>Switch to variant B <input type=\"datetime-local\" data-teach-key=\"ab-schedule\" data-teach=\"An auto-schedule swaps in variant B, snapshots the numbers mid-way, and ends the test on its own — no babysitting.\" id=\"ab-sched-switch-" + id + "\" value=\"" +
     escapeHTML(toLocalInputValue(schedule ? schedule.switchAt : "")) + "\"></label>" +
     "<label>Mid-way snapshot <input type=\"datetime-local\" id=\"ab-sched-snapshot-" + id + "\" value=\"" +
     escapeHTML(toLocalInputValue(schedule ? schedule.snapshotAt : "")) + "\"></label>" +
@@ -4834,6 +4931,7 @@ async function loadInsights() {
 
   const channelId = insightsChannelId();
   if (channelId) el("insights-channel").value = channelId;
+  maybeInitWrapup(channelId);
   updateInsightExportLinks();
   if (!channelId) {
     setStatus("insights-status", "Choose a channel to load its insights.", "error");
@@ -5039,6 +5137,7 @@ async function loadGoals() {
       box.innerHTML = "<p class=\"muted-text\">No goals yet — add one below.</p>";
       return;
     }
+    checkGoalCelebrations(list);
     box.innerHTML = list.map((goal) =>
       "<div class=\"goal-row\"><div class=\"goal-head\"><strong>" + escapeHTML(goal.text || "") + "</strong>" +
       " <span class=\"pill\">" + escapeHTML(goal.type || "") + "</span>" +
@@ -5183,6 +5282,7 @@ function renderHistory(entries) {
       "<span class=\"history-time\">" + escapeHTML(time) + "</span>" +
       "<span class=\"pill history-kind\">" + escapeHTML(entry.kind || "") + "</span>" +
       "<span class=\"history-summary\">" + escapeHTML(entry.summary || "") +
+      (entry.actor ? "<span class=\"history-actor\">by " + escapeHTML(entry.actor) + "</span>" : "") +
       (entry.detail ? "<span class=\"history-detail\">" + escapeHTML(entry.detail) + "</span>" : "") +
       (entry.kind === "rename" && !entry.isUndone ? "<span class=\"history-note\">Undo from the video drawer</span>" : "") +
       (entry.isUndone ? "<span class=\"history-note\">Undone</span>" : "") +
@@ -5643,13 +5743,67 @@ el("accounts-load-btn").addEventListener("click", loadAccounts);
 // extend the selection. Ctrl/Cmd+K opens the command palette
 // (item 72). Typing targets are ignored (except Esc, handled by the
 // drawer/palette closers).
-const G_NAV = { h: "home", v: "videos", e: "episodes", p: "playlists", a: "accounts", c: "history", s: "settings" };
+const G_NAV = { h: "home", v: "videos", e: "episodes", p: "playlists", a: "accounts", c: "history", s: "settings", f: "focus" };
 let pendingGAt = 0;
 
 function shortcutsOpen() { return !el("shortcuts-overlay").classList.contains("hidden"); }
 function paletteOpen() { return !el("palette-overlay").classList.contains("hidden"); }
 
-function openShortcuts() { el("shortcuts-overlay").classList.remove("hidden"); el("shortcuts-close").focus(); }
+// Shortcut trainer (item 189): usage counts live in LS; the
+// overlay marks shortcuts never fired with a "not tried yet" dot
+// and lists them under their own heading.
+const SHORTCUT_META = [
+  { key: "ctrlk", name: "Ctrl+K command palette" },
+  { key: "question", name: "? shortcuts overlay" },
+  { key: "slash", name: "/ jump to video search" },
+  { key: "gnav", name: "g then a letter — go to a section" },
+  { key: "arrows", name: "↑ ↓ / j k move in the video list" },
+  { key: "shiftarrows", name: "Shift+↑ ↓ extend the selection" },
+  { key: "enter", name: "Enter opens the active video" },
+  { key: "clickselect", name: "Ctrl/Shift-click for multi-select" },
+  { key: "esc", name: "Esc closes a panel" },
+];
+
+function shortcutUsage() { return LS.get("shortcutUsage", {}); }
+
+function noteShortcutUse(key) {
+  const counts = shortcutUsage();
+  counts[key] = (counts[key] || 0) + 1;
+  LS.set("shortcutUsage", counts);
+}
+
+function annotateShortcuts() {
+  const usage = shortcutUsage();
+  const untried = SHORTCUT_META.filter((meta) => !usage[meta.key]);
+  const box = el("shortcuts-untried");
+  if (untried.length === 0) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+  } else {
+    box.classList.remove("hidden");
+    box.innerHTML = "<h3>Shortcuts you have not tried yet</h3><p>" +
+      untried.map((meta) => escapeHTML(meta.name)).join(" · ") + "</p>";
+  }
+  const rows = document.querySelectorAll("#shortcuts-overlay .shortcut-table tbody tr");
+  rows.forEach((row, index) => {
+    const meta = SHORTCUT_META[index];
+    if (!meta) return;
+    row.querySelectorAll(".shortcut-new").forEach((dot) => dot.remove());
+    if (!usage[meta.key]) {
+      const dot = document.createElement("span");
+      dot.className = "shortcut-new";
+      dot.title = "Not tried yet";
+      dot.textContent = "●";
+      row.appendChild(dot);
+    }
+  });
+}
+
+function openShortcuts() {
+  annotateShortcuts();
+  el("shortcuts-overlay").classList.remove("hidden");
+  el("shortcuts-close").focus();
+}
 function closeShortcuts() { el("shortcuts-overlay").classList.add("hidden"); }
 el("shortcuts-close").addEventListener("click", closeShortcuts);
 el("shortcuts-overlay").addEventListener("click", (event) => {
@@ -5701,9 +5855,19 @@ function fuzzyMatch(text, query) {
   return true;
 }
 
+function paletteItems() {
+  // Searchable help (item 186): the HELP catalog is indexed too —
+  // "Help: <section>" opens that section's help panel.
+  const helpItems = Object.keys(HELP).map((section) => ({
+    label: "Help: " + HELP[section].title,
+    run: () => openHelp(section),
+  }));
+  return PALETTE_COMMANDS.concat(helpItems);
+}
+
 function renderPalette() {
   const query = el("palette-input").value.trim();
-  state.paletteItems = PALETTE_COMMANDS.filter((command) => !query || fuzzyMatch(command.label, query));
+  state.paletteItems = paletteItems().filter((command) => !query || fuzzyMatch(command.label, query));
   state.paletteIndex = Math.max(0, Math.min(state.paletteIndex, state.paletteItems.length - 1));
   el("palette-list").innerHTML = state.paletteItems.map((command, index) =>
     "<button class=\"palette-item" + (index === state.paletteIndex ? " is-active" : "") +
@@ -5749,16 +5913,19 @@ el("palette-overlay").addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
+    noteShortcutUse("ctrlk");
     if (paletteOpen()) closePalette(); else openPalette();
     return;
   }
   if (event.key === "Escape") {
+    noteShortcutUse("esc");
     if (paletteOpen()) { closePalette(); return; }
     if (shortcutsOpen()) { closeShortcuts(); return; }
   }
   if (isTypingTarget(event.target)) return;
   if (event.key === "?") {
     event.preventDefault();
+    noteShortcutUse("question");
     if (shortcutsOpen()) closeShortcuts(); else openShortcuts();
     return;
   }
@@ -5769,6 +5936,7 @@ document.addEventListener("keydown", (event) => {
     pendingGAt = 0;
     if (target) {
       event.preventDefault();
+      noteShortcutUse("gnav");
       navigate(target);
     }
     return;
@@ -5780,12 +5948,14 @@ document.addEventListener("keydown", (event) => {
   }
   if (state.section === "videos") {
     if (event.key === "j" || event.key === "k") {
+      noteShortcutUse("arrows");
       setActiveVideo(state.activeVideoIndex + (event.key === "j" ? 1 : -1));
       return;
     }
     // Shift+arrows extend the selection; the plain-arrow handler has
     // already moved the active row by the time this listener runs.
     if (event.shiftKey && (event.key === "ArrowDown" || event.key === "ArrowUp") && state.activeVideoIndex >= 0) {
+      noteShortcutUse("shiftarrows");
       const anchor = state.selectionAnchor >= 0 ? state.selectionAnchor : state.activeVideoIndex;
       selectVideoRange(anchor, state.activeVideoIndex, true);
       if (state.selectionAnchor < 0) state.selectionAnchor = anchor;
@@ -6383,6 +6553,7 @@ function renderAccountSwitcher() {
   if (wanted && accounts.some((account) => String(account.id) === String(wanted))) {
     select.value = wanted;
   }
+  renderAvatar();
 }
 
 // Switching the header account persists it as the default account
@@ -6569,6 +6740,8 @@ async function loadTimeline() {
   try {
     const items = await api("GET", "/api/timeline?channelId=" + encodeURIComponent(channelId) +
       "&days=" + encodeURIComponent(days));
+    const defaults = await fetchChannelDefaults(channelId);
+    const channelTz = defaults ? defaults.timezone : "";
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
       box.innerHTML = "<p class=\"muted-text\">Nothing published or scheduled in this window.</p>";
@@ -6590,7 +6763,7 @@ async function loadTimeline() {
           "<div class=\"timeline-item\">" +
           "<span class=\"pill tl-pill tl-" + escapeHTML(item.status || "") + "\">" + escapeHTML(item.status || "") + "</span>" +
           "<span class=\"muted-text\">" +
-            escapeHTML(new Date(item.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })) + "</span>" +
+            escapeHTML(fmtDualTime(item.at, channelTz)) + "</span>" +
           "<strong>" + escapeHTML(item.title) + "</strong>" +
           "<span class=\"muted-text\">" + escapeHTML(item.visibility || "") + "</span>" +
           (item.ytVideoId
@@ -6799,7 +6972,9 @@ function renderPeers() {
       "<span class=\"row\"><button data-peer-push=\"" + peer.id + "\" data-write>Push</button>" +
       "<button data-peer-pull=\"" + peer.id + "\" data-write>Pull</button>" +
       "<button data-peer-conflicts=\"" + peer.id + "\">Find conflicts</button>" +
+      "<button data-peer-version=\"" + peer.id + "\">Check version</button>" +
       "<button data-peer-delete=\"" + peer.id + "\" data-write>Remove peer</button></span></div>" +
+      "<div class=\"peer-version\" id=\"peer-version-" + peer.id + "\"></div>" +
       "<div class=\"peer-sharing\"><strong>Sharing</strong> " +
       (shared.size === 0
         ? "<span class=\"muted-text\">— nothing shared yet: this peer receives nothing until you tick a channel.</span>"
@@ -6825,6 +7000,8 @@ el("peers-list").addEventListener("click", (event) => {
   if (pullBtn) { runPeerSync(Number(pullBtn.dataset.peerPull), "pull", pullBtn); return; }
   const conflictsBtn = event.target.closest("[data-peer-conflicts]");
   if (conflictsBtn) { findPeerConflicts(Number(conflictsBtn.dataset.peerConflicts), conflictsBtn); return; }
+  const versionBtn = event.target.closest("[data-peer-version]");
+  if (versionBtn) { checkPeerVersion(Number(versionBtn.dataset.peerVersion), versionBtn); return; }
   const deleteBtn = event.target.closest("[data-peer-delete]");
   if (deleteBtn) { deletePeer(Number(deleteBtn.dataset.peerDelete)); return; }
   const sharingBtn = event.target.closest("[data-peer-sharing-save]");
@@ -6834,6 +7011,31 @@ el("peers-list").addEventListener("click", (event) => {
     resolvePeerConflict(Number(keepBtn.dataset.peerId), keepBtn.dataset.ytid, keepBtn.dataset.conflictKeep, keepBtn);
   }
 });
+
+// Version skew check (item 180): fetched on demand so rendering a
+// peer card costs no extra requests.
+async function checkPeerVersion(peerId, button) {
+  const box = el("peer-version-" + peerId);
+  if (!box) return;
+  button.disabled = true;
+  box.innerHTML = "<p class=\"muted-text\">Checking versions…</p>";
+  try {
+    const data = await api("GET", "/api/peers/" + peerId + "/version");
+    const remote = data.remote || {};
+    let html = "<p class=\"muted-text\">This machine: yt-manage v" + escapeHTML(data.localAppVersion || "?") +
+      " · payload schema " + escapeHTML(String(data.localSchemaVersion || "?")) + "<br>Peer: " +
+      (remote.appVersion
+        ? "yt-manage v" + escapeHTML(remote.appVersion) + " · payload schema " +
+          escapeHTML(String(remote.schemaVersion || "?")) + " · last contacted " + escapeHTML(relativeTime(remote.seenAt || ""))
+        : "never contacted yet — push, pull, or find conflicts once to learn its version.") + "</p>";
+    if (data.warning) html += "<p class=\"warn-box\">" + escapeHTML(data.warning) + "</p>";
+    box.innerHTML = html;
+  } catch (err) {
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
+  } finally {
+    button.disabled = false;
+  }
+}
 
 // Push/pull can take a while against a slow peer: the button is
 // disabled and the progress centre tracks the run.
@@ -6850,8 +7052,11 @@ async function runPeerSync(peerId, direction, button) {
       (result.playlistsApplied || 0) + " playlists applied, " + (result.itemsApplied || 0) + " playlist items";
     if (resultBox) {
       resultBox.innerHTML = "<p class=\"status-line ok\">" +
-        (direction === "push" ? "Pushed" : "Pulled") + ": " + escapeHTML(line) + "</p>";
+        (direction === "push" ? "Pushed" : "Pulled") + ": " + escapeHTML(line) + "</p>" +
+        // Version skew note from the server (item 180).
+        (result.versionNote ? "<p class=\"warn-box\">" + escapeHTML(result.versionNote) + "</p>" : "");
     }
+    if (result.versionNote) showToast(result.versionNote, "error");
     showToast((direction === "push" ? "Push" : "Pull") + " complete: " + line, "ok");
     state.videosLoaded = false;
     loadStatus();
@@ -7041,3 +7246,1473 @@ el("bundle-apply-btn").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
+
+// =====================================================================
+// WAVE 8 (items 176-200): backups, sharing, help & tours, personal
+// home & sidebar, celebrations, avatar, time zones, focus, wrap-up.
+// =====================================================================
+
+// ------------------------------------------------------ time helpers
+// Time-zone honesty (item 196): when a channel has its own zone
+// saved (channel defaults), publish times are shown in BOTH zones,
+// labelled — never silently converted. Without a channel zone the
+// local time is shown WITH its zone name.
+function fmtDualTime(iso, channelTz) {
+  if (!iso) return "";
+  const when = new Date(iso);
+  if (isNaN(when.getTime())) return String(iso);
+  const opts = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+  try {
+    if (channelTz) {
+      const inChannel = new Intl.DateTimeFormat(undefined, Object.assign({}, opts, { timeZone: channelTz })).format(when);
+      const local = new Intl.DateTimeFormat(undefined, opts).format(when);
+      if (inChannel === local) return inChannel + " " + channelTz + " (same as your zone)";
+      return inChannel + " " + channelTz + " · " + local + " your time";
+    }
+  } catch (err) { /* fall through to the labelled local time */ }
+  const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(when);
+  const zone = (parts.find((part) => part.type === "timeZoneName") || {}).value || "local time";
+  return new Intl.DateTimeFormat(undefined, opts).format(when) + " " + zone;
+}
+
+function fmtBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+async function wave8Copy(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (button) {
+      const original = button.textContent;
+      button.textContent = "Copied";
+      setTimeout(() => { button.textContent = original; }, 1600);
+    }
+    return true;
+  } catch (err) {
+    showToast("Copy failed — select the text and copy it manually.", "error");
+    return false;
+  }
+}
+
+// ------------------------------------------------ contextual help (181, 182)
+// One catalog keyed by section id: what the screen does, its key
+// actions, and the CLI equivalents (item 182). CLI lines only name
+// commands that really exist in the yt-manage command tree
+// (account, video, search, rename, episode, schedule, playlist,
+// comment, sync, settings, peer, mail, serve, completion, update);
+// where a screen has no CLI equivalent the entry says so instead
+// of inventing one.
+const HELP = {
+  home: {
+    title: "Home",
+    about: "Your start screen: library counts, the setup wizard, a getting-started checklist, what needs attention, suggestions, What's New, the offline queue and guided tours.",
+    actions: [
+      "Run the setup wizard, or load the demo data to explore safely",
+      "Customise home (top of this page) reorders or hides these cards",
+      "Click any library count to jump straight to that section",
+    ],
+    cli: [
+      "yt-manage serve — start this web UI",
+      "yt-manage account add — connect a YouTube account",
+      "yt-manage sync run — refresh the local mirror",
+    ],
+  },
+  suggestions: {
+    title: "Suggestions",
+    about: "Findings computed locally from the mirror: title patterns, grouping ideas, title health, cadence gaps, dead slots, thumbnail checks and anomalies. Nothing changes until you act on a finding.",
+    actions: [
+      "Open a finding to see the videos behind it",
+      "Apply a rename or scheduling fix straight from a finding",
+      "Dismiss findings that do not apply to your channel",
+    ],
+    cli: [
+      "Findings are computed in the UI; the fixes run through:",
+      "yt-manage rename — bulk title renames",
+      "yt-manage schedule apply — apply a publish plan",
+      "yt-manage search — find the videos a finding mentions",
+    ],
+  },
+  videos: {
+    title: "Videos",
+    about: "Every mirrored video: search, regex pattern highlighting, saved searches and rename recipes, bulk rename/description plans with preview-before-apply, the tags panel, and the video drawer for single edits, comments and per-video history.",
+    actions: [
+      "Filter with the search box (press / to jump here) and the All / Shorts / Long-form tabs",
+      "Select rows (Ctrl/Shift-click) and preview the bulk plan before applying",
+      "Open a video to edit it, read its comments, or undo a rename",
+    ],
+    cli: [
+      "yt-manage video list",
+      "yt-manage video show",
+      "yt-manage video edit",
+      "yt-manage search",
+      "yt-manage rename — the bulk rename command group",
+    ],
+  },
+  episodes: {
+    title: "Episodes",
+    about: "Series grouped from your titles. Each series card lists its episodes with publish state; from here you plan and apply publish schedules (cadence or absolute times) and post first comments for a whole episode.",
+    actions: [
+      "Pick a channel, open a series, set cadence + start time, preview, then apply",
+      "Move series builds a checklist plan — the YouTube API cannot move videos between channels",
+      "Post first comments for an entire episode from its card",
+    ],
+    cli: [
+      "yt-manage episode list",
+      "yt-manage episode show",
+      "yt-manage episode group",
+      "yt-manage schedule plan",
+      "yt-manage schedule apply",
+    ],
+  },
+  automation: {
+    title: "Automation",
+    about: "Rules that watch for matching videos and propose (or apply) a rename, a first comment, or a playlist add — plus the publish pipeline that can auto-comment, notify and file an episode when it finishes publishing.",
+    actions: [
+      "Write a rule, dry-run it against the library, then save it",
+      "Review queued proposals and approve or reject each one",
+      "Set quiet hours so notifications and digests wait until morning",
+    ],
+    cli: [
+      "Rules live in the UI; the related CLI surface is:",
+      "yt-manage settings — quiet hours and automation settings",
+      "yt-manage comment post — the manual equivalent of a comment action",
+    ],
+  },
+  commentcentre: {
+    title: "Comment Centre",
+    about: "One queue for first comments across channels: template drafts, posting, needs-reply triage, a link checker, bulk posting and the pin checklist. Pinning itself happens in YouTube Studio — the API cannot pin a comment.",
+    actions: [
+      "Generate drafts from your template, edit, then post",
+      "Work the needs-pin list in Studio, then mark items pinned here",
+      "Bulk-post a template across a channel's pending videos",
+    ],
+    cli: [
+      "yt-manage comment post",
+      "yt-manage comment edit",
+    ],
+  },
+  schedules: {
+    title: "Schedules",
+    about: "What is publishing and when: upcoming schedules, the publish timeline, a calendar view, and missed-publish recovery. When a channel has its own time zone saved, times show that zone next to yours.",
+    actions: [
+      "Load the timeline for a channel and a time window",
+      "Recover a missed publish by rescheduling from its episode",
+      "Print this view as a paper run-sheet (Print button)",
+    ],
+    cli: [
+      "yt-manage schedule plan",
+      "yt-manage schedule apply",
+      "yt-manage schedule rules list",
+    ],
+  },
+  focus: {
+    title: "Focus",
+    about: "A distilled view for publish time: only today's publishes, what goes live within the hour, the pin checklist, first-comment gaps on today's videos, and anything missed. Nothing else competes for attention here.",
+    actions: [
+      "Work top to bottom during a publish run",
+      "Exit focus (top right) returns to Home",
+    ],
+    cli: [
+      "Focus mode is a UI view over the same data as:",
+      "yt-manage schedule plan",
+      "yt-manage comment post",
+    ],
+  },
+  playlists: {
+    title: "Playlists",
+    about: "Playlists for one channel: create and edit, add or remove videos, build a playlist from a series, find gaps and duplicates, reorder with a preview, and run the publish checklist before a playlist goes public.",
+    actions: [
+      "Select a source playlist and move its videos into a target",
+      "Preview a reorder before applying it",
+      "Run the checklist before flipping a playlist to public",
+    ],
+    cli: [
+      "yt-manage playlist list",
+      "yt-manage playlist create",
+      "yt-manage playlist edit",
+    ],
+  },
+  insights: {
+    title: "Insights",
+    about: "Local analytics computed from the mirror — no live API calls: dashboard totals, per-video scorecards, a 7×24 publish heatmap, growth snapshots taken at each sync, channel comparison, goals, and the annual wrap-up.",
+    actions: [
+      "Compare two channels side by side",
+      "Track goals and export any table as CSV",
+      "Build the annual wrap-up and download it as a page",
+    ],
+    cli: [
+      "Insights are computed in the UI from the mirror; keep it fresh with:",
+      "yt-manage sync run",
+      "yt-manage video list",
+    ],
+  },
+  comments: {
+    title: "Comments",
+    about: "Recent comments across your videos with reply state. For a video's full thread and top comments, open its drawer from Videos.",
+    actions: [
+      "Filter down to unreplied comments",
+      "Jump from a comment to its video",
+    ],
+    cli: [
+      "yt-manage comment post",
+      "yt-manage comment edit",
+    ],
+  },
+  abtests: {
+    title: "A/B Tests",
+    about: "Title A/B tests: variant B runs against the original title, snapshots compare views and engagement, and you pick the winner — or an auto-schedule switches, snapshots and ends the test for you.",
+    actions: [
+      "Create a test with the video ID and a variant B title",
+      "Set an auto-schedule so the test runs itself",
+      "Pick the winner to keep that title",
+    ],
+    cli: [
+      "A/B tests are managed in the UI; the underlying edits are:",
+      "yt-manage video edit",
+      "yt-manage sync run",
+    ],
+  },
+  accounts: {
+    title: "Accounts",
+    about: "Connected YouTube accounts, the health centre (token, sync staleness, quota, mail configuration) with one-click fixes, per-account profiles and notification preferences, favourites, and the mail inbox.",
+    actions: [
+      "Run the health checks and follow a fix button",
+      "Give accounts a nickname and a colour — the colour can drive the UI accent",
+      "Sync one account, or all accounts at once",
+    ],
+    cli: [
+      "yt-manage account add",
+      "yt-manage sync run",
+      "yt-manage mail inbox",
+    ],
+  },
+  inbox: {
+    title: "Inbox",
+    about: "Mail delivered to your notifier address — publish notifications, digests and test mail — read through the configured mailbox.",
+    actions: [
+      "Refresh to fetch the latest mail",
+      "If this errors, mail is not configured yet — see Settings",
+    ],
+    cli: [
+      "yt-manage mail inbox",
+      "yt-manage mail watch",
+      "yt-manage mail send",
+    ],
+  },
+  peers: {
+    title: "Peers",
+    about: "A second yt-manage installation on your LAN. Push and pull mirror data between machines; per-peer sharing chooses exactly which channels travel, and title conflicts are resolved one by one.",
+    actions: [
+      "Add a peer with its base URL and the shared secret both sides agreed on",
+      "Tick the channels to share before the first push — nothing is shared by default",
+      "Check version spots a peer running an older yt-manage before it causes skew",
+    ],
+    cli: [
+      "yt-manage peer list",
+      "yt-manage peer add",
+      "yt-manage peer push",
+      "yt-manage peer pull",
+    ],
+  },
+  history: {
+    title: "History",
+    about: "The audit trail: syncs, renames, schedules, applies and setting changes across all accounts, newest first — including who made each change (this machine, by hostname, or a named peer).",
+    actions: [
+      "Filter by kind with the chips",
+      "Undo a schedule change from its row",
+      "Export the audit log as CSV",
+    ],
+    cli: [
+      "History is recorded automatically by both interfaces; there is no CLI command for it.",
+      "yt-manage serve — the UI you are reading it in",
+    ],
+  },
+  settings: {
+    title: "Settings",
+    about: "Everything configurable: read-only mode, mail (SMTP/IMAP), auto-sync cadence, quiet hours, notifications, channel defaults, workflow bundles, database backups, read-only share links, per-account overrides — and this browser's own preferences (sidebar layout, celebrations, accent colour).",
+    actions: [
+      "Turn read-only mode off here when you finish reviewing",
+      "Set a channel time zone in Channel defaults to get dual-zone publish times",
+      "Create a read-only share link to show someone the library safely",
+      "Hide Settings from the sidebar if you like — it stays reachable from the avatar menu, Ctrl+K, and g then s",
+    ],
+    cli: [
+      "yt-manage settings",
+      "yt-manage settings set read_only false — the read-only switch",
+      "yt-manage completion zsh — shell completions (also bash and powershell)",
+      "yt-manage update check / yt-manage update apply",
+    ],
+  },
+};
+
+// Example library (item 188): copyable blocks; the two rule
+// examples use exactly the shape the Automation form builds
+// ({name, enabled, mode, match:{query, visibility, channelId?},
+// action:{type, template|text|playlistId}}).
+const EXAMPLES = [
+  {
+    id: "rename-template",
+    title: "Rename template — numbered series titles",
+    body: "{title} #{n}",
+    note: "Keeps each title and appends its running number (#1, #2, …). Tokens: {title} {n} {series} {date}.",
+    fill: { target: "bulk-template", nav: "videos", label: "Use in the bulk bar" },
+  },
+  {
+    id: "regex-rename",
+    title: "Regex rename — strip bracketed tags",
+    body: "Find: \\[.*?\\]\\s*\nReplace: (empty)",
+    note: "Removes a leading [tag] from titles. The preview lists every old → new title before anything is applied.",
+    fill: { target: "bulk-regex", value: "\\[.*?\\]\\s*", extra: { "bulk-replacement": "" }, nav: "videos", label: "Use in the bulk bar" },
+  },
+  {
+    id: "cadence",
+    title: "Cadence schedule — a weekly series",
+    body: "Episodes → open the series → Schedule: cadence 7 days, start next Monday 18:00 → Preview → Apply.",
+    note: "Episode 1 publishes at the start time; each following episode lands 7 days later at the same time.",
+  },
+  {
+    id: "comment-template",
+    title: "First-comment template",
+    body: "New episode is live! {title}\nFull series: {series}",
+    note: "Tokens: {title} {episode} {series} {channel}. Paste it as a channel default comment, or use it directly in the Comment Centre bulk box.",
+    fill: { target: "cc-bulk-template", nav: "commentcentre", label: "Use in Comment Centre" },
+  },
+  {
+    id: "rule-rename",
+    title: "Rule — number new uploads (JSON, Automation shape)",
+    body: JSON.stringify({
+      name: "Number new harbour uploads",
+      enabled: true,
+      mode: "propose",
+      match: { query: "harbour", visibility: "private" },
+      action: { type: "rename", template: "{title} #{n}" },
+    }, null, 2),
+    note: "Mode “propose” queues matches for your approval in Automation; “auto” would apply them directly.",
+  },
+  {
+    id: "rule-comment",
+    title: "Rule — welcome comment on publish (JSON, Automation shape)",
+    body: JSON.stringify({
+      name: "Welcome comment",
+      enabled: true,
+      mode: "propose",
+      match: { visibility: "public" },
+      action: { type: "comment", text: "Thanks for watching! New episodes every week." },
+    }, null, 2),
+    note: "Same fields the Automation form writes — copy the values into the form, or keep this as documentation of a rule.",
+  },
+];
+
+function openHelp(section) {
+  const entry = HELP[section] || HELP.home;
+  state.helpSection = HELP[section] ? section : "home";
+  el("help-title").textContent = entry.title + STRINGS.helpTitleSuffix;
+  let html = "<p class=\"help-about\">" + escapeHTML(entry.about) + "</p>" +
+    "<h3>" + STRINGS.helpActions + "</h3><ul class=\"help-list\">" +
+    entry.actions.map((action) => "<li>" + escapeHTML(action) + "</li>").join("") + "</ul>" +
+    "<h3>" + STRINGS.helpCli + "</h3>" +
+    entry.cli.map((line) => line.indexOf("yt-manage") === 0
+      ? "<div class=\"help-cli\"><code>" + escapeHTML(line) + "</code></div>"
+      : "<p class=\"muted-text\">" + escapeHTML(line) + "</p>").join("");
+  if (TOURS_BY_SECTION[section]) {
+    html += "<h3>Guided tour</h3><p><button data-start-tour=\"" + TOURS_BY_SECTION[section] + "\">Start the “" +
+      escapeHTML(TOURS[TOURS_BY_SECTION[section]].title) + "” tour</button></p>";
+  }
+  el("help-body").innerHTML = html;
+  el("help-drawer").classList.add("open");
+  el("help-drawer").setAttribute("aria-hidden", "false");
+  el("help-backdrop").classList.remove("hidden");
+}
+
+function closeHelp() {
+  el("help-drawer").classList.remove("open");
+  el("help-drawer").setAttribute("aria-hidden", "true");
+  el("help-backdrop").classList.add("hidden");
+}
+
+function setHelpTab(tab) {
+  document.querySelectorAll("[data-help-tab]").forEach((btn) =>
+    btn.classList.toggle("is-active", btn.dataset.helpTab === tab));
+  el("help-body").classList.toggle("hidden", tab !== "guide");
+  el("help-examples").classList.toggle("hidden", tab !== "examples");
+  if (tab === "examples") renderExamples();
+}
+
+function renderExamples() {
+  el("help-examples").innerHTML = EXAMPLES.map((example) =>
+    "<div class=\"example-block\"><h4>" + escapeHTML(example.title) + "</h4>" +
+    "<pre class=\"example-code\">" + escapeHTML(example.body) + "</pre>" +
+    "<p class=\"muted-text\">" + escapeHTML(example.note) + "</p>" +
+    "<div class=\"row\"><button data-example-copy=\"" + example.id + "\">Copy</button>" +
+    (example.fill ? "<button data-example-fill=\"" + example.id + "\">" + escapeHTML(example.fill.label) + "</button>" : "") +
+    "</div></div>").join("");
+}
+
+function applyExample(example) {
+  const fill = example.fill;
+  if (!fill) return;
+  closeHelp();
+  navigate(fill.nav);
+  const value = fill.value !== undefined ? fill.value : example.body;
+  const apply = () => {
+    const input = el(fill.target);
+    if (input) {
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.focus();
+    }
+    if (fill.extra) {
+      Object.keys(fill.extra).forEach((id) => {
+        const extra = el(id);
+        if (extra) extra.value = fill.extra[id];
+      });
+    }
+  };
+  setTimeout(apply, 250);
+}
+
+// Sanitised feedback report (item 190): counts and settings only —
+// never titles, email addresses, or tokens.
+function buildFeedbackReport() {
+  const s = state.status || {};
+  return [
+    "yt-manage feedback report (sanitised — counts and settings only)",
+    "app version: " + (s.appVersion || "unknown"),
+    "screen: " + (SECTIONS[state.section] || state.section || "home"),
+    "read-only mode: " + (s.readOnly ? "on" : "off"),
+    "viewing via share link: " + (s.shareMode ? "yes" : "no"),
+    "quota today: " + (s.quotaUsed !== undefined && s.quotaUsed !== null ? s.quotaUsed : "?") +
+      " used" + (s.quotaBudget ? " of " + s.quotaBudget : ""),
+    "accounts: " + (s.accountCount || 0) + " · channels: " + (s.channelCount || 0) +
+      " · videos: " + (s.videoCount || 0) + " · episodes: " + (s.episodeCount || 0) +
+      " · playlists: " + (s.playlistCount || 0) + " · comments: " + (s.commentCount || 0),
+    "theme: " + (document.documentElement.dataset.theme || "dark") +
+      " · density: " + (document.documentElement.dataset.density || "comfortable"),
+    "browser language: " + (navigator.language || "unknown"),
+    "unseen what's-new items: " + whatsNewUnseen().length,
+    "offline queue entries: " + state.offlineQueue.length,
+  ].join("\n");
+}
+
+function showFeedbackReport() {
+  el("feedback-text").value = buildFeedbackReport();
+  el("feedback-box").classList.remove("hidden");
+}
+
+// ------------------------------------------------------- guided tours (183)
+// A deliberately small engine: steps are {navigate?, selector,
+// text}; the target gets a highlight ring and the popover explains
+// it. Steps whose element never appears centre the popover
+// instead of failing — tours stay replayable over any dataset.
+const TOURS = {
+  rename: {
+    title: "First rename",
+    steps: [
+      { navigate: "videos", selector: "#video-q", text: "Every rename starts with a filter. This search box narrows the library — on the demo channel, try a series name like “harbour”." },
+      { selector: "#bulk-template", text: "The bulk bar's title template. Tokens like {title} and {n} are filled per video — “{title} #{n}” numbers a whole series in one pass." },
+      { selector: "#bulk-preview", text: "The plan preview renders here as you type: every old → new title, with per-video include checkboxes. Nothing on YouTube changes yet." },
+      { selector: "#bulk-apply-btn", text: "Apply runs the previewed plan (about 50 quota units per video) and records it in History — renames can be undone from the video drawer." },
+    ],
+  },
+  schedule: {
+    title: "First schedule",
+    steps: [
+      { navigate: "episodes", selector: "#episode-channel", text: "Schedules belong to a channel's series. Pick the channel that owns the series here." },
+      { selector: "#episode-list", text: "Each series card lists its episodes with their publish state. Open a series to find its Schedule form — cadence, start time, preview, apply." },
+      { navigate: "schedules", selector: "#timeline-list", text: "Applied schedules land here, on the publish timeline — with the channel's own time zone shown next to yours when one is saved." },
+    ],
+  },
+  abtest: {
+    title: "First A/B test",
+    steps: [
+      { navigate: "abtests", selector: "#ab-new-video", text: "An A/B test compares two titles for one video over time. Start by entering the video's ID (visible in its drawer in Videos)." },
+      { selector: "#ab-create-form", text: "Variant A is the current title; write variant B, then create. The test swaps titles and snapshots the numbers as it runs." },
+      { selector: "#ab-list", text: "Results, snapshots and the winner picker live here — and each test can have an auto-schedule that switches, snapshots and ends it for you." },
+    ],
+  },
+};
+
+const TOURS_BY_SECTION = { videos: "rename", episodes: "schedule", abtests: "abtest" };
+
+function waitForTourTarget(selector, timeoutMs) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      const target = document.querySelector(selector);
+      if (target) { resolve(target); return; }
+      if (Date.now() - started > timeoutMs) { resolve(null); return; }
+      setTimeout(tick, 120);
+    };
+    tick();
+  });
+}
+
+function positionTour(target) {
+  const ring = el("tour-ring");
+  const popover = el("tour-popover");
+  if (!target) {
+    ring.classList.add("hidden");
+    popover.style.left = "50%";
+    popover.style.top = "38%";
+    popover.style.transform = "translate(-50%, -50%)";
+    return;
+  }
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  requestAnimationFrame(() => {
+    const rect = target.getBoundingClientRect();
+    ring.classList.remove("hidden");
+    ring.style.left = (rect.left - 6) + "px";
+    ring.style.top = (rect.top - 6) + "px";
+    ring.style.width = (rect.width + 12) + "px";
+    ring.style.height = (rect.height + 12) + "px";
+    popover.style.transform = "";
+    const below = rect.bottom + 190 < window.innerHeight;
+    popover.style.top = (below ? rect.bottom + 16 : Math.max(8, rect.top - 200)) + "px";
+    popover.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 380)) + "px";
+  });
+}
+
+async function showTourStep() {
+  const tour = state.tour;
+  if (!tour) return;
+  const step = tour.steps[tour.index];
+  el("tour-overlay").classList.remove("hidden");
+  el("tour-step-label").textContent = TOURS[tour.name].title + " — step " + (tour.index + 1) + " of " + tour.steps.length;
+  el("tour-text").textContent = step.text;
+  el("tour-back-btn").disabled = tour.index === 0;
+  el("tour-next-btn").textContent = tour.index === tour.steps.length - 1 ? STRINGS.tourFinish : STRINGS.tourNext;
+  if (step.navigate && state.section !== step.navigate) navigate(step.navigate);
+  const target = await waitForTourTarget(step.selector, 2600);
+  if (state.tour === tour) positionTour(target);
+}
+
+function startTour(name) {
+  if (!TOURS[name]) return;
+  closeHelp();
+  state.tour = { name, index: 0, steps: TOURS[name].steps };
+  showTourStep();
+}
+
+function endTour() {
+  state.tour = null;
+  el("tour-overlay").classList.add("hidden");
+}
+
+function renderToursCard() {
+  const note = el("tours-demo-note");
+  if (!note) return;
+  if (state.status && state.status.hasVideos === false) {
+    note.innerHTML = "<p class=\"muted-text\">No videos yet — the tours run over the demo channel. " +
+      "<button id=\"tours-demo-btn\">Load demo data first</button></p>";
+  } else {
+    note.innerHTML = "";
+  }
+}
+
+// ------------------------------------------------------------ what's new (184)
+async function loadWhatsNew() {
+  try {
+    const items = await api("GET", "/api/whats-new");
+    state.whatsNew = Array.isArray(items) ? items : [];
+  } catch (err) {
+    state.whatsNew = [];
+  }
+  renderWhatsNew();
+}
+
+function whatsNewUnseen() {
+  const seen = new Set(LS.get("whatsnew.seen", []));
+  return state.whatsNew.filter((entry) => !seen.has(entry.id));
+}
+
+function renderWhatsNew() {
+  const card = el("whatsnew-card");
+  if (!card) return;
+  const unseen = whatsNewUnseen();
+  el("badge-whatsnew").textContent = unseen.length ? String(unseen.length) : "";
+  card.classList.toggle("hidden", unseen.length === 0);
+  el("whatsnew-list").innerHTML = unseen.map((entry) =>
+    "<div class=\"whatsnew-entry\"><h3>" + escapeHTML(entry.title) + "</h3>" +
+    "<ul class=\"help-list\">" + (entry.points || []).map((point) => "<li>" + escapeHTML(point) + "</li>").join("") + "</ul>" +
+    (entry.section && SECTIONS[entry.section]
+      ? "<button data-whatsnew-goto=\"" + escapeHTML(entry.section) + "\">Try it</button>" : "") +
+    "</div>").join("");
+}
+
+// --------------------------------------------------------- offline queue (179)
+async function loadOfflineQueue() {
+  try {
+    const items = await api("GET", "/api/offline-queue");
+    state.offlineQueue = Array.isArray(items) ? items : [];
+  } catch (err) {
+    state.offlineQueue = [];
+  }
+  renderOfflineQueue();
+}
+
+function renderOfflineQueue() {
+  const card = el("offline-queue-card");
+  if (!card) return;
+  const entries = state.offlineQueue;
+  card.classList.toggle("hidden", entries.length === 0);
+  el("offline-queue-list").innerHTML = entries.map((entry) =>
+    "<div class=\"oq-entry\"><div class=\"oq-head\"><strong>" + escapeHTML(entry.kind || "apply") + "</strong>" +
+    " <span class=\"muted-text\">queued " + escapeHTML(new Date(entry.createdAt).toLocaleString()) + "</span>" +
+    " <span class=\"status-line error\">" + escapeHTML(entry.error || "") + "</span></div>" +
+    "<ul class=\"oq-changes\">" + (entry.changes || []).map((change) =>
+      "<li>" + escapeHTML(change.oldTitle || "(untitled)") + " → <strong>" + escapeHTML(change.newTitle || "") + "</strong>" +
+      (change.ytVideoId ? " <span class=\"muted-text\">(" + escapeHTML(change.ytVideoId) + ")</span>" : "") + "</li>").join("") + "</ul>" +
+    "<div class=\"row\"><button data-oq-retry=\"" + entry.id + "\" data-write>" + STRINGS.offlineRetry + "</button>" +
+    "<button data-oq-discard=\"" + entry.id + "\" data-write>" + STRINGS.offlineDiscard + "</button></div>" +
+    "<div class=\"status-line\" id=\"oq-result-" + entry.id + "\"></div></div>").join("");
+}
+
+// --------------------------------------------------------- db backups (176)
+async function loadDBBackupCard() {
+  try {
+    const schedule = await api("GET", "/api/backups/schedule");
+    el("db-backup-cadence").value = schedule.cadence || "off";
+    el("db-backup-keep").value = schedule.keep || 4;
+  } catch (err) { /* the list load below reports errors */ }
+  await loadDBBackupList();
+}
+
+async function loadDBBackupList() {
+  const box = el("db-backup-list");
+  try {
+    const sets = await api("GET", "/api/backups/db");
+    const list = Array.isArray(sets) ? sets : [];
+    box.innerHTML = list.length === 0
+      ? "<p class=\"muted-text\">No backup sets yet.</p>"
+      : list.map((set) =>
+        "<div class=\"backup-row\"><span class=\"backup-name\">" + escapeHTML(set.name) + "</span>" +
+        "<span class=\"muted-text\">" + escapeHTML(new Date(set.createdAt).toLocaleString()) + "</span>" +
+        "<span class=\"muted-text\">" + (set.files || 0) + " files · " + fmtBytes(set.sizeBytes) + "</span>" +
+        "<button data-backup-stage=\"" + escapeHTML(set.name) + "\" data-write>" + STRINGS.stageRestore + "</button></div>").join("");
+  } catch (err) {
+    box.innerHTML = "<p class=\"muted-text\">Backup sets could not be loaded.</p>";
+  }
+}
+
+// ------------------------------------------------------------- share (177)
+function renderShareState(status) {
+  const banner = el("share-banner");
+  if (!banner) return;
+  const on = !!(status && status.shareMode);
+  banner.classList.toggle("hidden", !on);
+  if (on) {
+    el("share-banner-expiry").textContent = status.shareExpiresAt
+      ? " (expires " + new Date(status.shareExpiresAt).toLocaleString() + ")"
+      : "";
+  }
+}
+
+async function loadShareCard() {
+  try {
+    const data = await api("GET", "/api/share");
+    el("share-state").textContent = data.active
+      ? "A share link is active until " + new Date(data.expiresAt).toLocaleString() + "."
+      : "No share link is active.";
+    el("share-revoke-btn").disabled = !data.active;
+  } catch (err) {
+    el("share-state").textContent = "";
+  }
+}
+
+// ------------------------------------------------------ custom sidebar (192)
+function sidebarLayout() {
+  const all = Object.keys(SECTIONS);
+  const saved = LS.get("sidebar.layout", null);
+  const order = [];
+  if (saved && Array.isArray(saved.order)) {
+    saved.order.forEach((section) => { if (SECTIONS[section] && order.indexOf(section) === -1) order.push(section); });
+  }
+  all.forEach((section) => { if (order.indexOf(section) === -1) order.push(section); });
+  const hidden = saved && Array.isArray(saved.hidden) ? saved.hidden.filter((s) => SECTIONS[s]) : [];
+  return { order, hidden };
+}
+
+function saveSidebarLayout(layout) { LS.set("sidebar.layout", layout); }
+
+function applySidebarLayout() {
+  const nav = document.querySelector(".side-nav");
+  if (!nav) return;
+  const layout = sidebarLayout();
+  layout.order.forEach((section) => {
+    const item = nav.querySelector(".nav-item[data-section=\"" + section + "\"]");
+    if (item) nav.appendChild(item);
+  });
+  const hidden = new Set(layout.hidden);
+  nav.querySelectorAll(".nav-item").forEach((item) => {
+    item.style.display = hidden.has(item.dataset.section) ? "none" : "";
+  });
+}
+
+function renderSidebarControls() {
+  const box = el("sidebar-controls");
+  if (!box) return;
+  const layout = sidebarLayout();
+  const hidden = new Set(layout.hidden);
+  box.innerHTML = layout.order.map((section, index) =>
+    "<div class=\"sidebar-row\"><label class=\"check\"><input type=\"checkbox\" data-sidebar-visible=\"" + section + "\"" +
+    (hidden.has(section) ? "" : " checked") + "> " + escapeHTML(SECTIONS[section]) + "</label>" +
+    "<span class=\"row\"><button data-sidebar-move=\"" + section + ":-1\"" + (index === 0 ? " disabled" : "") + ">↑</button>" +
+    "<button data-sidebar-move=\"" + section + ":1\"" + (index === layout.order.length - 1 ? " disabled" : "") + ">↓</button></span></div>").join("");
+}
+
+// ------------------------------------------------------ personal home (191)
+const HOME_CARDS = [
+  "home-stats", "wizard-card", "checklist-card", "recent-card",
+  "home-suggestions-card", "whatnext-card", "whatsnew-card",
+  "offline-queue-card", "tours-card", "demo-card", "detected-card",
+];
+const HOME_CARD_LABELS = {
+  "home-stats": "Library counts",
+  "wizard-card": "Setup wizard",
+  "checklist-card": "Getting-started checklist",
+  "recent-card": "Needs attention",
+  "home-suggestions-card": "Suggestions",
+  "whatnext-card": "What next",
+  "whatsnew-card": "What's new",
+  "offline-queue-card": "Offline queue",
+  "tours-card": "Guided tours",
+  "demo-card": "Demo data",
+  "detected-card": "Detected on this computer",
+};
+
+function homeLayout() {
+  const saved = LS.get("home.layout", null);
+  const order = [];
+  if (saved && Array.isArray(saved.order)) {
+    saved.order.forEach((id) => { if (HOME_CARDS.indexOf(id) !== -1 && order.indexOf(id) === -1) order.push(id); });
+  }
+  HOME_CARDS.forEach((id) => { if (order.indexOf(id) === -1) order.push(id); });
+  const hidden = saved && Array.isArray(saved.hidden) ? saved.hidden.filter((id) => HOME_CARDS.indexOf(id) !== -1) : [];
+  return { order, hidden };
+}
+
+function saveHomeLayout(layout) { LS.set("home.layout", layout); }
+
+function applyHomeLayout() {
+  const section = el("section-home");
+  if (!section) return;
+  const layout = homeLayout();
+  const hidden = new Set(layout.hidden);
+  layout.order.forEach((id) => {
+    const card = el(id);
+    if (card && card.parentElement === section) section.appendChild(card);
+  });
+  HOME_CARDS.forEach((id) => {
+    const card = el(id);
+    if (!card) return;
+    if (state.homeCustomising) card.style.display = "block";
+    else if (hidden.has(id)) card.style.display = "none";
+    else if (card.style.display === "none") card.style.display = "";
+    card.classList.toggle("home-card-dim", state.homeCustomising && hidden.has(id));
+  });
+  renderHomeCardTools();
+}
+
+function renderHomeCardTools() {
+  document.querySelectorAll(".home-card-tools").forEach((tools) => tools.remove());
+  if (!state.homeCustomising) return;
+  const layout = homeLayout();
+  const hidden = new Set(layout.hidden);
+  layout.order.forEach((id, index) => {
+    const card = el(id);
+    if (!card) return;
+    const tools = document.createElement("div");
+    tools.className = "home-card-tools";
+    tools.innerHTML = "<span class=\"home-card-name\">" + escapeHTML(HOME_CARD_LABELS[id] || id) + "</span>" +
+      "<button data-home-move=\"" + id + ":-1\"" + (index === 0 ? " disabled" : "") + ">↑ Up</button>" +
+      "<button data-home-move=\"" + id + ":1\"" + (index === layout.order.length - 1 ? " disabled" : "") + ">↓ Down</button>" +
+      "<button data-home-toggle=\"" + id + "\">" + (hidden.has(id) ? "Show" : "Hide") + "</button>";
+    card.insertBefore(tools, card.firstChild);
+  });
+}
+
+function setHomeCustomising(on) {
+  state.homeCustomising = on;
+  el("home-customise-btn").classList.toggle("hidden", on);
+  el("home-customise-done").classList.toggle("hidden", !on);
+  el("home-customise-hint").textContent = on
+    ? "Reorder or hide Home cards — saved in this browser. Cards with their own logic (wizard, checklist) keep deciding when they have something to show."
+    : "";
+  applyHomeLayout();
+}
+
+// --------------------------------------------------------- avatar menu (195)
+function currentAvatarAccount() {
+  const accounts = state.accounts || (state.overview && state.overview.accounts) || [];
+  if (!accounts.length) return null;
+  const selected = el("scope-account") ? el("scope-account").value : "";
+  const focus = focusedAccountId();
+  const wanted = selected || (focus ? String(focus) : "");
+  return accounts.find((account) => String(account.id) === String(wanted)) || accounts[0];
+}
+
+function renderAvatar() {
+  const button = el("avatar-btn");
+  if (!button) return;
+  const account = currentAvatarAccount();
+  const name = account ? accountDisplayName(account) : "Account";
+  button.textContent = (name.trim().charAt(0) || "A").toUpperCase();
+  const profile = account ? state.profiles[account.id] : null;
+  const colour = profile && profile.colour ? profile.colour : "";
+  button.style.background = colour;
+  button.style.borderColor = colour;
+  button.title = account ? "Account menu — " + name : "Accounts";
+  if (!el("avatar-menu").classList.contains("hidden")) renderAvatarMenu();
+}
+
+function avatarDot(account) {
+  const profile = account ? state.profiles[account.id] : null;
+  const colour = (profile && profile.colour) || account.colour || "";
+  return accountColourDot({ colour });
+}
+
+function renderAvatarMenu() {
+  const menu = el("avatar-menu");
+  const accounts = state.accounts || (state.overview && state.overview.accounts) || [];
+  const current = currentAvatarAccount();
+  let html = "";
+  if (current) {
+    html += "<div class=\"avatar-menu-head\">" + avatarDot(current) +
+      "<span><strong>" + escapeHTML(accountDisplayName(current)) + "</strong><br>" +
+      "<span class=\"muted-text\">" + escapeHTML(current.label || "") + "</span></span></div>";
+  } else {
+    html += "<div class=\"avatar-menu-head\"><span class=\"muted-text\">No accounts connected yet</span></div>";
+  }
+  html += "<button data-avatar-action=\"sync\">Sync now</button>" +
+    "<button data-avatar-action=\"health\">Token health</button>" +
+    "<button data-avatar-action=\"settings\">Settings</button>";
+  if (accounts.length > 1) {
+    html += "<div class=\"avatar-menu-sep\">Switch account</div>" + accounts.map((account) =>
+      "<button data-avatar-switch=\"" + account.id + "\"" +
+      (current && String(account.id) === String(current.id) ? " class=\"is-current\"" : "") + ">" +
+      avatarDot(account) + " " + escapeHTML(accountDisplayName(account)) + "</button>").join("");
+  }
+  menu.innerHTML = html;
+}
+
+function closeAvatarMenu() {
+  el("avatar-menu").classList.add("hidden");
+  el("avatar-btn").setAttribute("aria-expanded", "false");
+}
+
+// ------------------------------------------- channel-branded accents (194)
+function accentFollowsChannel() { return LS.get("accentChannel", true) !== false; }
+
+function channelAccountColour(channelId) {
+  if (!state.overview || !state.overview.accounts) return "";
+  const account = state.overview.accounts.find((item) =>
+    (item.channels || []).some((channel) => String(channel.id) === String(channelId)));
+  if (!account) return "";
+  const profile = state.profiles[account.id];
+  return account.colour || (profile && profile.colour) || "";
+}
+
+function updateAccentForScope(channelId) {
+  const root = document.documentElement;
+  if (!accentFollowsChannel() || !channelId) {
+    root.style.removeProperty("--accent");
+    return;
+  }
+  if (!state.overview) {
+    ensureOverview().then(() => updateAccentForScope(LS.get("scopeChannel", ""))).catch(() => {});
+    return;
+  }
+  const colour = channelAccountColour(channelId);
+  if (colour) root.style.setProperty("--accent", colour);
+  else root.style.removeProperty("--accent");
+}
+
+// ------------------------------------------------------- celebrations (193)
+// Restrained by design: one toast variant, no animation beyond the
+// toast itself, off when the user opts out or asks the OS for
+// reduced motion, and at most once per goal/series per session.
+const celebratedKeys = new Set();
+
+function celebrationsEnabled() {
+  if (LS.get("celebrations", true) === false) return false;
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+  return true;
+}
+
+function celebrateOnce(key, message) {
+  if (!celebrationsEnabled() || celebratedKeys.has(key)) return;
+  celebratedKeys.add(key);
+  const toast = showToast("🎉 " + message, "ok");
+  if (toast) toast.classList.add("toast-celebrate");
+}
+
+function checkGoalCelebrations(goals) {
+  (goals || []).forEach((goal) => {
+    if ((goal.progress || 0) >= 100) {
+      celebrateOnce("goal:" + goal.id, "Goal reached: " + (goal.text || "goal"));
+    }
+  });
+}
+
+async function checkSeriesCelebration() {
+  const episodeId = state.currentEpisodeId;
+  if (!episodeId) return;
+  try {
+    const episode = state.episodes.find((item) => String(item.id) === String(episodeId));
+    if (!episode || !episode.channelId) return;
+    const fresh = await api("GET", "/api/episodes?channel=" + encodeURIComponent(episode.channelId));
+    const current = (fresh || []).find((item) => String(item.id) === String(episodeId));
+    if (!current) return;
+    const rows = episodeDisplayRows(current);
+    if (rows.length === 0) return;
+    const allSet = rows.every((part) => part.visibility === "scheduled" || part.visibility === "public");
+    if (allSet) {
+      celebrateOnce("series:" + (current.seriesKey || current.id),
+        "Series fully scheduled: " + episodeSeriesName(current));
+    }
+  } catch (err) { /* celebrations never break the flow */ }
+}
+
+// --------------------------------------------------- teach-once tips (187)
+let teachTimer = null;
+
+function hideTeachTip() { el("teach-tip").classList.add("hidden"); }
+
+function maybeShowTeach(target) {
+  const text = target.getAttribute("data-teach");
+  const key = target.getAttribute("data-teach-key") || target.id;
+  if (!text || !key) return;
+  const seen = LS.get("teach.seen", []);
+  if (seen.indexOf(key) !== -1) return;
+  seen.push(key);
+  LS.set("teach.seen", seen);
+  const tip = el("teach-tip");
+  tip.textContent = text;
+  const rect = target.getBoundingClientRect();
+  tip.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 348)) + "px";
+  tip.style.top = (rect.bottom + 8) + "px";
+  tip.classList.remove("hidden");
+  if (teachTimer) clearTimeout(teachTimer);
+  teachTimer = setTimeout(hideTeachTip, 7000);
+}
+
+// ------------------------------------------------------------ focus (199)
+async function loadFocus() {
+  const channels = (state.status && state.status.channels) || [];
+  const scoped = LS.get("scopeChannel", "");
+  const channelId = scoped || (channels.length ? String(channels[0].id) : "");
+  if (!channelId) {
+    el("focus-scope-note").textContent = STRINGS.focusNoChannel;
+    ["focus-live", "focus-today", "focus-pins", "focus-comments", "focus-missed"].forEach((id) =>
+      { el(id).innerHTML = "<p class=\"muted-text\">—</p>"; });
+    setStatus("focus-status", "", "");
+    return;
+  }
+  el("focus-scope-note").textContent = "Channel: " + (channelTitle(Number(channelId)) || channelId) +
+    " · Today only — publishes, pins, first comments, misses.";
+  setStatus("focus-status", STRINGS.focusLoading);
+  const defaults = await fetchChannelDefaults(channelId);
+  const tz = defaults ? defaults.timezone : "";
+  const now = new Date();
+  const isToday = (iso) => {
+    const when = new Date(iso);
+    return !isNaN(when.getTime()) && when.getFullYear() === now.getFullYear() &&
+      when.getMonth() === now.getMonth() && when.getDate() === now.getDate();
+  };
+  let timeline = [];
+  let centre = [];
+  try { timeline = await api("GET", "/api/timeline?channelId=" + encodeURIComponent(channelId) + "&days=1"); } catch (err) { timeline = []; }
+  try { centre = await api("GET", "/api/comment-centre"); } catch (err) { centre = []; }
+  const missed = await fetchMissed();
+  const todays = (Array.isArray(timeline) ? timeline : []).filter((item) => isToday(item.at));
+  const liveSoon = todays.filter((item) => {
+    const when = new Date(item.at);
+    return item.status === "scheduled" && when > now && (when - now) <= 60 * 60 * 1000;
+  });
+  const publishedToday = todays.filter((item) => item.status === "published");
+  const focusRow = (item) =>
+    "<div class=\"focus-row\"><span class=\"pill tl-pill tl-" + escapeHTML(item.status || "") + "\">" +
+    escapeHTML(item.status || "") + "</span><span class=\"focus-time\">" + escapeHTML(fmtDualTime(item.at, tz)) + "</span>" +
+    "<strong>" + escapeHTML(item.title) + "</strong>" +
+    (item.ytVideoId ? "<a href=\"https://www.youtube.com/watch?v=" + encodeURIComponent(item.ytVideoId) +
+      "\" target=\"_blank\" rel=\"noopener\">Watch</a>" : "") + "</div>";
+  el("focus-live").innerHTML = liveSoon.length
+    ? liveSoon.map(focusRow).join("")
+    : "<p class=\"muted-text\">" + STRINGS.focusAllClear + "</p>";
+  el("focus-today").innerHTML = todays.length
+    ? todays.map(focusRow).join("")
+    : "<p class=\"muted-text\">Nothing publishes today on this channel.</p>";
+  const pins = (Array.isArray(centre) ? centre : []).filter((row) => row.needsPin).slice(0, 10);
+  el("focus-pins").innerHTML = pins.length
+    ? pins.map((row) =>
+      "<div class=\"focus-row\"><strong>" + escapeHTML(row.title) + "</strong>" +
+      "<span class=\"muted-text\">posted — pin it in Studio</span>" +
+      (row.ytVideoId
+        ? "<a href=\"https://www.youtube.com/watch?v=" + encodeURIComponent(row.ytVideoId) +
+          "\" target=\"_blank\" rel=\"noopener\">Open video</a>" : "") + "</div>").join("")
+    : "<p class=\"muted-text\">" + STRINGS.focusAllClear + "</p>";
+  const publishedIds = new Set(publishedToday.map((item) => item.videoId));
+  const gaps = (Array.isArray(centre) ? centre : []).filter((row) => row.status === "pending" && publishedIds.has(row.videoId));
+  el("focus-comments").innerHTML = gaps.length
+    ? gaps.map((row) =>
+      "<div class=\"focus-row\"><strong>" + escapeHTML(row.title) + "</strong>" +
+      "<button data-focus-comment=\"" + row.videoId + "\">Write the first comment</button></div>").join("")
+    : "<p class=\"muted-text\">" + STRINGS.focusAllClear + "</p>";
+  const missedHere = (missed || []).filter((item) => !item.channelId || String(item.channelId) === String(channelId));
+  el("focus-missed").innerHTML = missedHere.length
+    ? missedHere.map((item) =>
+      "<div class=\"focus-row\"><strong>" + escapeHTML(item.title || "") + "</strong>" +
+      "<span class=\"muted-text\">was due " + escapeHTML(new Date(item.publishAt).toLocaleString()) + "</span></div>").join("")
+    : "<p class=\"muted-text\">" + STRINGS.focusAllClear + "</p>";
+  setStatus("focus-status",
+    todays.length + " publish(es) today · " + liveSoon.length + " going live within the hour · " +
+    pins.length + " to pin · " + gaps.length + " first-comment gap(s) · " + missedHere.length + " missed", "ok");
+}
+
+// ----------------------------------------------------------- wrap-up (200)
+function maybeInitWrapup(channelId) {
+  const yearInput = el("wrapup-year");
+  if (yearInput && !yearInput.value) yearInput.value = String(new Date().getFullYear());
+  const select = el("wrapup-channel");
+  if (select && channelId && !select.value) {
+    select.value = String(channelId);
+    loadWrapup();
+  }
+}
+
+async function loadWrapup() {
+  const channelId = el("wrapup-channel").value;
+  const year = el("wrapup-year").value || String(new Date().getFullYear());
+  if (!channelId) {
+    setStatus("wrapup-status", "Choose a channel first.", "error");
+    return;
+  }
+  setStatus("wrapup-status", "Building the wrap-up…");
+  try {
+    const data = await api("GET", "/api/insights/wrapup?channelId=" + encodeURIComponent(channelId) +
+      "&year=" + encodeURIComponent(year));
+    state.wrapup = data;
+    renderWrapup(data);
+    setStatus("wrapup-status", "Wrap-up for " + (data.channelTitle || "channel") + ", " + data.year, "ok");
+  } catch (err) {
+    setStatus("wrapup-status", friendlyError(err), "error");
+    showErrorToast(err, "insights");
+  }
+}
+
+function wrapupMonthsHTML(data) {
+  const months = data.uploadsByMonth || {};
+  const keys = Object.keys(months).sort();
+  if (keys.length === 0) return "<p class=\"muted-text\">No uploads recorded this year.</p>";
+  const max = Math.max.apply(null, keys.map((key) => months[key])) || 1;
+  return "<div class=\"wrapup-months\">" + keys.map((key) => {
+    const label = new Date(key + "-02T00:00:00").toLocaleDateString(undefined, { month: "short" });
+    return "<div class=\"wrapup-month\"><span class=\"wrapup-month-label\">" + escapeHTML(label) + "</span>" +
+      "<span class=\"wrapup-month-bar\" style=\"width:" + Math.max(4, Math.round((months[key] / max) * 100)) + "%\"></span>" +
+      "<span>" + NF.format(months[key]) + "</span></div>";
+  }).join("") + "</div>";
+}
+
+function renderWrapup(data) {
+  const chips = (list, cls) => (list && list.length)
+    ? list.map((name) => "<span class=\"pill " + cls + "\">" + escapeHTML(name) + "</span>").join(" ")
+    : "<span class=\"muted-text\">none</span>";
+  el("wrapup-result").innerHTML =
+    "<h3 class=\"wrapup-title\">" + escapeHTML(data.channelTitle || "") + " — " + escapeHTML(String(data.year)) + " in review</h3>" +
+    "<div class=\"stat-grid\">" +
+    "<div class=\"stat\"><span class=\"stat-num\">" + NF.format(data.videosPublished || 0) + "</span><span class=\"stat-label\">Videos published</span></div>" +
+    "<div class=\"stat\"><span class=\"stat-num\">" + NF.format(data.totalViews || 0) + "</span><span class=\"stat-label\">Total views</span></div>" +
+    "<div class=\"stat\"><span class=\"stat-num\">" + NF.format(data.scheduledAhead || 0) + "</span><span class=\"stat-label\">Scheduled ahead</span></div>" +
+    "<div class=\"stat\"><span class=\"stat-num\">" + Math.round(data.commentCoveragePct || 0) + "%</span><span class=\"stat-label\">First-comment coverage</span></div>" +
+    "</div>" +
+    (data.topTitle
+      ? "<p class=\"wrapup-top\">Top performer: <strong>" + escapeHTML(data.topTitle) + "</strong> — " +
+        NF.format(data.topViews || 0) + " views</p>"
+      : "") +
+    "<h4>Uploads by month</h4>" + wrapupMonthsHTML(data) +
+    "<h4>Series completed</h4><p>" + chips(data.seriesCompleted, "wrapup-done") + "</p>" +
+    "<h4>Series still active</h4><p>" + chips(data.seriesActive, "wrapup-active") + "</p>" +
+    (data.note ? "<p class=\"muted-text\">" + escapeHTML(data.note) + "</p>" : "") +
+    "<div class=\"row\"><button id=\"wrapup-download-btn\">" + STRINGS.wrapupDownload + "</button></div>";
+}
+
+function downloadWrapup() {
+  const data = state.wrapup;
+  if (!data) return;
+  const listItems = (list) => (list && list.length)
+    ? list.map((name) => "<li>" + escapeHTML(name) + "</li>").join("")
+    : "<li>none</li>";
+  const months = data.uploadsByMonth || {};
+  const monthRows = Object.keys(months).sort().map((key) =>
+    "<tr><td>" + escapeHTML(key) + "</td><td>" + NF.format(months[key]) + "</td></tr>").join("");
+  const page = "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">" +
+    "<title>" + escapeHTML((data.channelTitle || "Channel") + " — " + data.year + " wrap-up") + "</title>" +
+    "<style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;color:#111}" +
+    "h1{font-size:28px}.stats{display:flex;gap:24px;flex-wrap:wrap}.stat-num{font-size:32px;font-weight:700;display:block}" +
+    "table{border-collapse:collapse}td{border:1px solid #ccc;padding:4px 10px}.muted{color:#555}</style></head><body>" +
+    "<h1>" + escapeHTML(data.channelTitle || "") + " — " + escapeHTML(String(data.year)) + " in review</h1>" +
+    "<div class=\"stats\">" +
+    "<div><span class=\"stat-num\">" + NF.format(data.videosPublished || 0) + "</span>Videos published</div>" +
+    "<div><span class=\"stat-num\">" + NF.format(data.totalViews || 0) + "</span>Total views</div>" +
+    "<div><span class=\"stat-num\">" + NF.format(data.scheduledAhead || 0) + "</span>Scheduled ahead</div>" +
+    "<div><span class=\"stat-num\">" + Math.round(data.commentCoveragePct || 0) + "%</span>First-comment coverage</div></div>" +
+    (data.topTitle ? "<p>Top performer: <strong>" + escapeHTML(data.topTitle) + "</strong> — " + NF.format(data.topViews || 0) + " views</p>" : "") +
+    "<h2>Uploads by month</h2><table>" + monthRows + "</table>" +
+    "<h2>Series completed</h2><ul>" + listItems(data.seriesCompleted) + "</ul>" +
+    "<h2>Series still active</h2><ul>" + listItems(data.seriesActive) + "</ul>" +
+    (data.note ? "<p class=\"muted\">" + escapeHTML(data.note) + "</p>" : "") +
+    "<p class=\"muted\">Generated by yt-manage from the local mirror on " +
+    escapeHTML(new Date(data.generatedAt || Date.now()).toLocaleDateString()) + ".</p>" +
+    "</body></html>";
+  const blob = new Blob([page], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "wrapup-" + data.year + ".html";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ------------------------------------------------------------- wave 8 init
+function initWave8() {
+  // Language (item 197): the document speaks the browser's
+  // language; new panels format through Intl (NF / DF_DATE).
+  document.documentElement.lang = navigator.language || "en";
+
+  applySidebarLayout();
+  applyHomeLayout();
+
+  // Per-section help buttons (items 181, 182).
+  document.querySelectorAll("main .panel").forEach((panel) => {
+    const section = panel.id.replace("section-", "");
+    if (!HELP[section]) return;
+    const head = panel.querySelector(".section-head") || panel.querySelector(".focus-head") || panel;
+    const button = document.createElement("button");
+    button.className = "help-btn";
+    button.type = "button";
+    button.textContent = STRINGS.helpButton;
+    button.title = "Help for this screen — what it does, key actions, CLI equivalents";
+    button.addEventListener("click", () => openHelp(section));
+    head.appendChild(button);
+  });
+
+  // Interface toggles owned by this wave.
+  el("set-celebrations").checked = LS.get("celebrations", true) !== false;
+  el("set-accent-channel").checked = accentFollowsChannel();
+  el("set-celebrations").addEventListener("change", () =>
+    LS.set("celebrations", el("set-celebrations").checked));
+  el("set-accent-channel").addEventListener("change", () => {
+    LS.set("accentChannel", el("set-accent-channel").checked);
+    updateAccentForScope(LS.get("scopeChannel", ""));
+  });
+
+  // Help drawer wiring.
+  el("help-close").addEventListener("click", closeHelp);
+  el("help-backdrop").addEventListener("click", closeHelp);
+  document.querySelectorAll("[data-help-tab]").forEach((button) =>
+    button.addEventListener("click", () => setHelpTab(button.dataset.helpTab)));
+  el("help-body").addEventListener("click", (event) => {
+    const tour = event.target.closest("[data-start-tour]");
+    if (tour) startTour(tour.dataset.startTour);
+  });
+  el("help-examples").addEventListener("click", (event) => {
+    const copy = event.target.closest("[data-example-copy]");
+    if (copy) {
+      const example = EXAMPLES.find((item) => item.id === copy.dataset.exampleCopy);
+      if (example) wave8Copy(example.body, copy);
+      return;
+    }
+    const fill = event.target.closest("[data-example-fill]");
+    if (fill) {
+      const example = EXAMPLES.find((item) => item.id === fill.dataset.exampleFill);
+      if (example) applyExample(example);
+    }
+  });
+  el("help-feedback-btn").addEventListener("click", showFeedbackReport);
+  el("footer-feedback-btn").addEventListener("click", () => {
+    openHelp(state.section);
+    showFeedbackReport();
+  });
+  el("feedback-copy-btn").addEventListener("click", (event) =>
+    wave8Copy(el("feedback-text").value, event.target));
+
+  // Tours (delegated: the Home card buttons and the demo offer).
+  document.addEventListener("click", (event) => {
+    const tourBtn = event.target.closest("[data-tour]");
+    if (tourBtn) { startTour(tourBtn.dataset.tour); return; }
+    if (event.target.closest("#tours-demo-btn")) {
+      api("POST", "/api/demo/seed", {}).then(() => {
+        showToast("Demo data loaded — tours now have a channel to walk over.", "ok");
+        loadStatus();
+      }).catch((err) => showErrorToast(err, "home"));
+    }
+  });
+  el("tour-next-btn").addEventListener("click", () => {
+    if (!state.tour) return;
+    if (state.tour.index >= state.tour.steps.length - 1) { endTour(); return; }
+    state.tour.index += 1;
+    showTourStep();
+  });
+  el("tour-back-btn").addEventListener("click", () => {
+    if (!state.tour || state.tour.index === 0) return;
+    state.tour.index -= 1;
+    showTourStep();
+  });
+  el("tour-end-btn").addEventListener("click", endTour);
+
+  // Home customise (item 191).
+  el("home-customise-btn").addEventListener("click", () => setHomeCustomising(true));
+  el("home-customise-done").addEventListener("click", () => setHomeCustomising(false));
+  el("section-home").addEventListener("click", (event) => {
+    const move = event.target.closest("[data-home-move]");
+    if (move) {
+      const parts = move.dataset.homeMove.split(":");
+      const layout = homeLayout();
+      const index = layout.order.indexOf(parts[0]);
+      const swap = index + Number(parts[1]);
+      if (index !== -1 && swap >= 0 && swap < layout.order.length) {
+        const other = layout.order[swap];
+        layout.order[swap] = layout.order[index];
+        layout.order[index] = other;
+        saveHomeLayout(layout);
+        applyHomeLayout();
+      }
+      return;
+    }
+    const toggle = event.target.closest("[data-home-toggle]");
+    if (toggle) {
+      const layout = homeLayout();
+      const id = toggle.dataset.homeToggle;
+      layout.hidden = layout.hidden.indexOf(id) !== -1
+        ? layout.hidden.filter((item) => item !== id)
+        : layout.hidden.concat([id]);
+      saveHomeLayout(layout);
+      applyHomeLayout();
+    }
+  });
+
+  // Sidebar controls (item 192).
+  el("sidebar-controls").addEventListener("click", (event) => {
+    const move = event.target.closest("[data-sidebar-move]");
+    if (!move) return;
+    const parts = move.dataset.sidebarMove.split(":");
+    const layout = sidebarLayout();
+    const index = layout.order.indexOf(parts[0]);
+    const swap = index + Number(parts[1]);
+    if (index === -1 || swap < 0 || swap >= layout.order.length) return;
+    const other = layout.order[swap];
+    layout.order[swap] = layout.order[index];
+    layout.order[index] = other;
+    saveSidebarLayout(layout);
+    applySidebarLayout();
+    renderSidebarControls();
+  });
+  el("sidebar-controls").addEventListener("change", (event) => {
+    const box = event.target.closest("[data-sidebar-visible]");
+    if (!box) return;
+    const layout = sidebarLayout();
+    layout.hidden = box.checked
+      ? layout.hidden.filter((item) => item !== box.dataset.sidebarVisible)
+      : layout.hidden.concat([box.dataset.sidebarVisible]);
+    saveSidebarLayout(layout);
+    applySidebarLayout();
+  });
+
+  // What's New actions (item 184).
+  el("whatsnew-seen-btn").addEventListener("click", () => {
+    LS.set("whatsnew.seen", state.whatsNew.map((entry) => entry.id));
+    renderWhatsNew();
+  });
+  el("whatsnew-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-whatsnew-goto]");
+    if (button) navigate(button.dataset.whatsnewGoto);
+  });
+
+  // Offline queue actions (item 179).
+  el("offline-queue-list").addEventListener("click", async (event) => {
+    const retry = event.target.closest("[data-oq-retry]");
+    if (retry) {
+      retry.disabled = true;
+      try {
+        const result = await api("POST", "/api/offline-queue/" + retry.dataset.oqRetry + "/retry", {});
+        showToast("Offline retry: " + (result.applied || 0) + " applied, " + (result.remaining || 0) + " still queued.", "ok");
+        loadStatus();
+      } catch (err) {
+        showErrorToast(err, "home");
+      } finally {
+        loadOfflineQueue();
+      }
+      return;
+    }
+    const discard = event.target.closest("[data-oq-discard]");
+    if (discard) {
+      try {
+        await api("DELETE", "/api/offline-queue/" + discard.dataset.oqDiscard);
+        showToast("Offline queue entry discarded.", "ok");
+      } catch (err) {
+        showErrorToast(err, "home");
+      }
+      loadOfflineQueue();
+    }
+  });
+
+  // DB backups (item 176).
+  el("db-backup-save").addEventListener("click", async () => {
+    setStatus("db-backup-status", "Saving…");
+    try {
+      await api("PUT", "/api/backups/schedule", {
+        cadence: el("db-backup-cadence").value,
+        keep: Number(el("db-backup-keep").value || 4),
+      });
+      setStatus("db-backup-status", "Backup schedule saved", "ok");
+      showToast("Backup schedule saved", "ok");
+    } catch (err) {
+      setStatus("db-backup-status", friendlyError(err), "error");
+      showErrorToast(err, "settings");
+    }
+  });
+  el("db-backup-now").addEventListener("click", async (event) => {
+    const button = event.target;
+    button.disabled = true;
+    setStatus("db-backup-status", "Backing up…");
+    try {
+      const set = await api("POST", "/api/backups/db", {});
+      setStatus("db-backup-status", "Backup created: " + (set.name || ""), "ok");
+      showToast("Database backup created", "ok");
+      loadDBBackupList();
+    } catch (err) {
+      setStatus("db-backup-status", friendlyError(err), "error");
+      showErrorToast(err, "settings");
+    } finally {
+      button.disabled = false;
+    }
+  });
+  el("db-backup-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-backup-stage]");
+    if (!button) return;
+    button.disabled = true;
+    try {
+      const result = await api("POST", "/api/backups/db/stage-restore", { name: button.dataset.backupStage });
+      const note = el("db-restore-note");
+      note.textContent = "Staged for restore: " + (result.staged || []).join(", ") + ". " + (result.note || "");
+      note.classList.remove("hidden");
+      setStatus("db-backup-status", "Restore staged — nothing has been restored yet.", "ok");
+    } catch (err) {
+      setStatus("db-backup-status", friendlyError(err), "error");
+      showErrorToast(err, "settings");
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  // Share link (item 177).
+  el("share-create-btn").addEventListener("click", async () => {
+    setStatus("share-status", "Creating link…");
+    try {
+      const data = await api("POST", "/api/share", { hours: Number(el("share-hours").value || 24) });
+      const link = window.location.origin + (data.path || "");
+      el("share-link-input").value = link;
+      el("share-link-note").textContent = (data.note || "") +
+        (data.expiresAt ? " Expires " + new Date(data.expiresAt).toLocaleString() + "." : "");
+      el("share-link-box").classList.remove("hidden");
+      setStatus("share-status", "Share link created", "ok");
+      loadShareCard();
+    } catch (err) {
+      setStatus("share-status", friendlyError(err), "error");
+      showErrorToast(err, "settings");
+    }
+  });
+  el("share-copy-btn").addEventListener("click", (event) =>
+    wave8Copy(el("share-link-input").value, event.target));
+  el("share-revoke-btn").addEventListener("click", async () => {
+    try {
+      await api("DELETE", "/api/share");
+      el("share-link-box").classList.add("hidden");
+      el("share-link-input").value = "";
+      setStatus("share-status", "Share link revoked", "ok");
+      showToast("Share link revoked", "ok");
+      loadShareCard();
+    } catch (err) {
+      setStatus("share-status", friendlyError(err), "error");
+      showErrorToast(err, "settings");
+    }
+  });
+
+  // Avatar menu (item 195).
+  el("avatar-btn").addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = el("avatar-menu");
+    const opening = menu.classList.contains("hidden");
+    if (opening) {
+      renderAvatarMenu();
+      menu.classList.remove("hidden");
+      el("avatar-btn").setAttribute("aria-expanded", "true");
+    } else {
+      closeAvatarMenu();
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (!el("avatar-menu").classList.contains("hidden") && !event.target.closest(".avatar-wrap")) {
+      closeAvatarMenu();
+    }
+  });
+  el("avatar-menu").addEventListener("click", (event) => {
+    const action = event.target.closest("[data-avatar-action]");
+    if (action) {
+      const kind = action.dataset.avatarAction;
+      closeAvatarMenu();
+      if (kind === "sync") runSync(el("sync-all-btn"), "sync-progress", "sync-result");
+      if (kind === "settings") navigate("settings");
+      if (kind === "health") {
+        navigate("accounts");
+        setTimeout(() => {
+          const centre = el("health-centre");
+          if (centre) centre.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 400);
+      }
+      return;
+    }
+    const swap = event.target.closest("[data-avatar-switch]");
+    if (swap) {
+      closeAvatarMenu();
+      const select = el("scope-account");
+      select.value = swap.dataset.avatarSwitch;
+      select.dispatchEvent(new Event("change"));
+    }
+  });
+
+  // Focus (item 199).
+  el("focus-exit-btn").addEventListener("click", () => navigate("home"));
+  el("section-focus").addEventListener("click", (event) => {
+    if (event.target.closest("[data-focus-comment]")) navigate("commentcentre");
+  });
+
+  // Wrap-up (item 200).
+  el("wrapup-load-btn").addEventListener("click", loadWrapup);
+  el("wrapup-result").addEventListener("click", (event) => {
+    if (event.target.closest("#wrapup-download-btn")) downloadWrapup();
+  });
+
+  // Print (item 198).
+  el("schedules-print-btn").addEventListener("click", () => window.print());
+  el("playlists-print-btn").addEventListener("click", () => window.print());
+
+  // Teach-once tooltips (item 187).
+  const teachFrom = (event) => {
+    const target = event.target.closest ? event.target.closest("[data-teach]") : null;
+    if (target) maybeShowTeach(target);
+  };
+  document.addEventListener("focusin", teachFrom);
+  document.addEventListener("mouseover", teachFrom);
+  el("teach-tip").addEventListener("click", hideTeachTip);
+
+  loadWhatsNew();
+  if (LS.get("scopeChannel", "")) updateAccentForScope(LS.get("scopeChannel", ""));
+}
+
+initWave8();

@@ -26,6 +26,7 @@ type Server struct {
 	mu            sync.Mutex
 	plans         map[string]storedPlan
 	forceReadOnly bool
+	actorName     string
 	heldWebhooks  []webhook.Event
 }
 
@@ -50,10 +51,27 @@ func (s *Server) ReadOnly() bool {
 // so the app can explain itself.
 func (s *Server) readOnlyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A valid share link (item 177) pins the request to
+		// read-only, whatever the server's own mode is. Arriving
+		// with ?share= sets the cookie so later requests keep
+		// the pin without the parameter.
+		shareActive, _ := s.shareStateFor(r)
+		if shareActive && r.URL.Query().Get("share") != "" {
+			http.SetCookie(w, &http.Cookie{
+				Name: "ytm_share", Value: r.URL.Query().Get("share"),
+				Path: "/", MaxAge: 24 * 60 * 60, SameSite: http.SameSiteLaxMode,
+			})
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead &&
-			strings.HasPrefix(r.URL.Path, "/api/") && s.ReadOnly() {
-			writeError(w, http.StatusForbidden, fmt.Errorf("read-only mode is on: writes are blocked. Turn it off with: yt-manage settings set read_only false"))
-			return
+			strings.HasPrefix(r.URL.Path, "/api/") {
+			if shareActive {
+				writeError(w, http.StatusForbidden, fmt.Errorf("this is a read-only share link: changes are not allowed through it"))
+				return
+			}
+			if s.ReadOnly() {
+				writeError(w, http.StatusForbidden, fmt.Errorf("read-only mode is on: writes are blocked. Turn it off with: yt-manage settings set read_only false"))
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -214,6 +232,20 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/export/bundle", s.handleExportBundle)
 	s.mux.HandleFunc("POST /api/import/preview", s.handleImportPreview)
 	s.mux.HandleFunc("POST /api/import/apply", s.handleImportApply)
+	s.mux.HandleFunc("GET /api/backups/schedule", s.handleGetBackupSchedule)
+	s.mux.HandleFunc("PUT /api/backups/schedule", s.handlePutBackupSchedule)
+	s.mux.HandleFunc("GET /api/backups/db", s.handleListDBBackups)
+	s.mux.HandleFunc("POST /api/backups/db", s.handleCreateDBBackup)
+	s.mux.HandleFunc("POST /api/backups/db/stage-restore", s.handleStageDBRestore)
+	s.mux.HandleFunc("POST /api/share", s.handleCreateShare)
+	s.mux.HandleFunc("GET /api/share", s.handleGetShare)
+	s.mux.HandleFunc("DELETE /api/share", s.handleDeleteShare)
+	s.mux.HandleFunc("GET /api/offline-queue", s.handleListOfflineQueue)
+	s.mux.HandleFunc("POST /api/offline-queue/{id}/retry", s.handleRetryOfflineQueue)
+	s.mux.HandleFunc("DELETE /api/offline-queue/{id}", s.handleDeleteOfflineQueue)
+	s.mux.HandleFunc("GET /api/peers/{id}/version", s.handlePeerVersion)
+	s.mux.HandleFunc("GET /api/whats-new", s.handleWhatsNew)
+	s.mux.HandleFunc("GET /api/insights/wrapup", s.handleWrapup)
 	s.mux.HandleFunc("POST /api/tags/rename", s.handleRenameTag)
 	s.mux.HandleFunc("POST /api/peer/push", s.handlePeerPush)
 	s.mux.HandleFunc("POST /api/peer/pull", s.handlePeerPull)

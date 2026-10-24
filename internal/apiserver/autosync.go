@@ -61,6 +61,7 @@ func (s *Server) autoTick(ctx context.Context) {
 	s.runPipelines(ctx, cfg)
 	s.runABTestSchedules(ctx)
 	s.runNotifyTick(cfg)
+	s.maybeRunScheduledBackup()
 }
 
 // bumpHeld adds to the quiet-hours held counter.

@@ -70,6 +70,7 @@ type ActivityLog struct {
 	Kind      string    `gorm:"index" json:"kind"`
 	Summary   string    `json:"summary"`
 	Detail    string    `json:"detail"`
+	Actor     string    `json:"actor"`
 	IsUndone  bool      `json:"is_undone"`
 	CreatedAt time.Time `json:"created_at"`
 }

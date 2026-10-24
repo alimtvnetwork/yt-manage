@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -46,9 +47,30 @@ func (s *Server) quotaUsedToday() (int, error) {
 }
 
 // recordActivity writes one activity entry; failures are ignored
-// so logging never breaks the action it describes.
+// so logging never breaks the action it describes. Entries are
+// attributed to this machine (item 178); peer-driven changes
+// use recordActivityAs with the peer's name.
 func (s *Server) recordActivity(kind string, summary string, detail string) {
-	_, _ = s.store.Activity.Record(kind, summary, detail)
+	s.recordActivityAs(kind, summary, detail, s.localActor())
+}
+
+// recordActivityAs is recordActivity with an explicit actor.
+func (s *Server) recordActivityAs(kind string, summary string, detail string, actor string) {
+	_, _ = s.store.Activity.RecordWithActor(kind, summary, detail, actor)
+}
+
+// localActor names this machine for activity attribution: the
+// host name, resolved once.
+func (s *Server) localActor() string {
+	if s.actorName != "" {
+		return s.actorName
+	}
+	name, err := os.Hostname()
+	if err != nil || name == "" {
+		name = "this machine"
+	}
+	s.actorName = name
+	return name
 }
 
 // settingDTO is one setting in the Settings API response.
@@ -305,6 +327,7 @@ type activityDTO struct {
 	Kind      string `json:"kind"`
 	Summary   string `json:"summary"`
 	Detail    string `json:"detail"`
+	Actor     string `json:"actor"`
 	IsUndone  bool   `json:"isUndone"`
 	CanUndo   bool   `json:"canUndo"`
 	CreatedAt string `json:"createdAt"`
@@ -329,6 +352,7 @@ func (s *Server) handleListActivity(w http.ResponseWriter, r *http.Request) {
 	for _, entry := range entries {
 		dtos = append(dtos, activityDTO{
 			ID: entry.ID, Kind: entry.Kind, Summary: entry.Summary, Detail: entry.Detail,
+			Actor:     entry.Actor,
 			IsUndone:  entry.IsUndone,
 			CanUndo:   entry.Kind == "schedule" && !entry.IsUndone,
 			CreatedAt: formatTime(entry.CreatedAt),

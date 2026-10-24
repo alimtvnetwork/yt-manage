@@ -216,6 +216,26 @@ func (s *Server) handleBulkEdit(w http.ResponseWriter, r *http.Request) {
 		delete(s.plans, body.PlanID)
 	}
 	s.mu.Unlock()
+	if len(remaining) > 0 {
+		// Offline queue (item 179): when every failure is
+		// connectivity-shaped, the change-set is queued for a
+		// later retry instead of dying with the plan.
+		messages := map[uint]string{}
+		for _, result := range results {
+			if !result.IsOK {
+				messages[result.VideoID] = result.Error
+			}
+		}
+		networkFailed := 0
+		for _, change := range remaining {
+			if isNetworkError(messages[change.VideoID]) {
+				networkFailed++
+			}
+		}
+		if networkFailed == len(remaining) {
+			s.queueOfflineApply("bulk rename", remaining, messages[remaining[0].VideoID])
+		}
+	}
 	if applied > 0 {
 		s.recordActivity("rename", fmt.Sprintf("Renamed %d of %d videos", applied, len(stored.plan.Changes)), "")
 		s.addQuota(50 * applied)
