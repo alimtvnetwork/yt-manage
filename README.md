@@ -11,8 +11,20 @@ On Linux or macOS, install the latest release with the installer
 script:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/alimtvnetwork/yt-manage/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/alimtvnetwork/yt-manage/main/install.sh | bash
 ```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/alimtvnetwork/yt-manage/main/install.ps1 | iex
+```
+
+Both installers download the release archive for your platform,
+verify its SHA256 against the release `checksums.txt` before
+installing anything, and install the plain `yt-manage` binary
+(`yt-manage.exe` on Windows). Release archives ship for Linux
+amd64, Windows amd64/arm64, and macOS amd64/arm64.
 
 The script detects your OS and architecture, downloads the matching
 release archive and `checksums.txt`, verifies the archive's SHA256
