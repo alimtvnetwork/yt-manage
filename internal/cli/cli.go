@@ -37,6 +37,7 @@ func commandGroups() []commandGroup {
 		{"serve", runServe},
 		{"peer", runPeer},
 		{"llm", runLLM},
+		{"settings", runSettings},
 		{"update", runUpdate},
 		{"version", runVersion},
 	}

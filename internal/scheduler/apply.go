@@ -54,6 +54,45 @@ func applyEntry(ctx context.Context, svc *youtube.Service, store *repo.Store, en
 	return store.Videos.UpdateSchedule(entry.VideoID, &publishAt, model.VisibilityScheduled)
 }
 
+// RestoreSchedule puts one video back to a previous publish state:
+// a non-nil publishAt re-schedules it (private with that publish
+// time); a nil publishAt clears the schedule and restores the
+// given visibility. It is the undo path for an applied schedule
+// (spec 29, item 62) and mirrors applyEntry in reverse.
+func RestoreSchedule(ctx context.Context, svc *youtube.Service, store *repo.Store, videoID uint, ytVideoID string, publishAt *time.Time, visibility model.Visibility) error {
+	full, err := ytapi.FetchVideo(ctx, svc, ytVideoID)
+	if err != nil {
+		return err
+	}
+	if full.Status == nil {
+		full.Status = &youtube.VideoStatus{}
+	}
+	if publishAt != nil {
+		full.Status.PrivacyStatus = "private"
+		full.Status.PublishAt = publishAt.UTC().Format(time.RFC3339)
+	} else {
+		privacy := visibility.String()
+		if privacy == "draft" || privacy == "scheduled" {
+			// Draft and scheduled are local concepts; on the API
+			// both are a private video with no publish time.
+			privacy = "private"
+		}
+		full.Status.PrivacyStatus = privacy
+		full.Status.PublishAt = ""
+	}
+	if _, err := svc.Videos.Update([]string{"snippet", "status"}, full).Context(ctx).Do(); err != nil {
+		return err
+	}
+	storedVisibility := visibility
+	if publishAt == nil && storedVisibility == model.VisibilityScheduled {
+		storedVisibility = model.VisibilityPrivate
+	}
+	if publishAt != nil {
+		storedVisibility = model.VisibilityScheduled
+	}
+	return store.Videos.UpdateSchedule(videoID, publishAt, storedVisibility)
+}
+
 // markEpisodeScheduled records the applied cadence and the first
 // publish time on the episode row of the just-finished episode.
 func markEpisodeScheduled(store *repo.Store, plan *Plan, lastEntry PlanEntry) error {

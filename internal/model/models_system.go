@@ -60,3 +60,20 @@ type Setting struct {
 func (Setting) TableName() string {
 	return "settings"
 }
+
+// ActivityLog is one entry in the global activity/history view in
+// system.db (spec 29, items 58 and 63): settings changes, syncs,
+// applies, and schedules, with an optional JSON detail payload
+// that carries what an undo needs.
+type ActivityLog struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Kind      string    `gorm:"index" json:"kind"`
+	Summary   string    `json:"summary"`
+	Detail    string    `json:"detail"`
+	IsUndone  bool      `json:"is_undone"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (ActivityLog) TableName() string {
+	return "activity_logs"
+}

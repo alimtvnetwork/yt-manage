@@ -31,6 +31,10 @@ const state = {
   calendarVideos: [],
   calendarRules: [],
   dragPart: null,
+  // Wave 3 (items 51-75)
+  settingsData: null,
+  accounts: null,
+  historyKind: "",
 };
 
 const SECTIONS = {
@@ -42,6 +46,7 @@ const SECTIONS = {
   comments: "Comments",
   abtests: "A/B Tests",
   accounts: "Accounts",
+  history: "History",
   settings: "Settings",
 };
 
@@ -72,7 +77,17 @@ async function api(method, path, body) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
   }
-  const response = await fetch(path, options);
+  let response;
+  try {
+    response = await fetch(path, options);
+  } catch (netErr) {
+    // Network-level failure: the local server is unreachable (item 67).
+    showOfflineBanner();
+    const err = new Error(netErr && netErr.message ? netErr.message : "Network error");
+    err.isNetworkError = true;
+    throw err;
+  }
+  if (currentBannerId === "offline") clearBanner();
   const payload = await response.json();
   if (!payload.ok) {
     throw new Error(payload.error || ("HTTP " + response.status));
@@ -84,6 +99,177 @@ function escapeHTML(text) {
   return String(text == null ? "" : text)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// ------------------------------------------------- feedback (wave 3)
+// Plain-language errors (item 65): the friendly text is the headline;
+// the raw message stays available under "Details" in error toasts.
+function friendlyError(err) {
+  const raw = (err && err.message) || String(err || "Unknown error");
+  const lower = raw.toLowerCase();
+  if ((err && err.isNetworkError) || lower.indexOf("failed to fetch") !== -1 ||
+      lower.indexOf("networkerror") !== -1 || lower.indexOf("load failed") !== -1) {
+    return "Cannot reach the local yt-manage server — is `yt-manage serve` still running?";
+  }
+  if (lower.indexOf("plan") !== -1 && (lower.indexOf("not found") !== -1 || lower.indexOf("expired") !== -1)) {
+    return "That edit plan expired — build the plan again.";
+  }
+  if (lower.indexOf("token") !== -1 || lower.indexOf("auth") !== -1 || lower.indexOf("401") !== -1 ||
+      lower.indexOf("unauthori") !== -1 || lower.indexOf("credential") !== -1 || lower.indexOf("oauth") !== -1) {
+    return "The account's sign-in has expired — reconnect it from Accounts.";
+  }
+  return raw;
+}
+
+// Toasts (item 61): successes state the result and leave on their own;
+// errors persist until dismissed and carry Details + a copyable
+// report (item 69).
+function showToast(message, kind) {
+  const stack = el("toast-stack");
+  if (!stack) return null;
+  const toast = document.createElement("div");
+  toast.className = "toast " + (kind === "error" ? "toast-error" : "toast-ok");
+  toast.innerHTML = "<span class=\"toast-text\">" + escapeHTML(message) + "</span>" +
+    "<button class=\"toast-close\" title=\"Dismiss\">✕</button>";
+  toast.querySelector(".toast-close").addEventListener("click", () => toast.remove());
+  stack.appendChild(toast);
+  if (kind !== "error") {
+    setTimeout(() => {
+      toast.classList.add("toast-out");
+      setTimeout(() => toast.remove(), 350);
+    }, 4000);
+  }
+  return toast;
+}
+
+function showErrorToast(err, where) {
+  const raw = (err && err.message) || String(err || "Unknown error");
+  const toast = showToast(friendlyError(err), "error");
+  if (!toast) return;
+  const extra = document.createElement("div");
+  extra.className = "toast-extra";
+  extra.innerHTML = "<div class=\"toast-actions\">" +
+    "<button class=\"toast-details-btn\">Details</button>" +
+    "<button class=\"toast-copy-btn\">Copy report</button></div>" +
+    "<pre class=\"toast-details hidden\"></pre>";
+  const details = extra.querySelector(".toast-details");
+  details.textContent = raw;
+  extra.querySelector(".toast-details-btn").addEventListener("click", () => {
+    details.classList.toggle("hidden");
+  });
+  const copyBtn = extra.querySelector(".toast-copy-btn");
+  copyBtn.addEventListener("click", async () => {
+    const report = JSON.stringify({
+      when: new Date().toISOString(),
+      where: where || state.section,
+      message: raw,
+    }, null, 2);
+    try {
+      await navigator.clipboard.writeText(report);
+      copyBtn.textContent = "Copied";
+    } catch (copyErr) {
+      details.textContent = report;
+      details.classList.remove("hidden");
+      copyBtn.textContent = "Report shown below";
+    }
+    setTimeout(() => { copyBtn.textContent = "Copy report"; }, 2000);
+  });
+  toast.appendChild(extra);
+}
+
+// Banners (item 67): one clear banner at a time, dismissible, with a
+// single action. Used for offline, quota-exhausted and sync errors.
+const dismissedBanners = new Set();
+let currentBannerId = null;
+
+function showBanner(id, text, actionLabel, actionFn) {
+  if (dismissedBanners.has(id) || currentBannerId === id) return;
+  const area = el("banner-area");
+  if (!area) return;
+  currentBannerId = id;
+  area.innerHTML = "<div class=\"banner\" role=\"alert\">" +
+    "<span class=\"banner-text\">" + escapeHTML(text) + "</span>" +
+    (actionLabel ? "<button class=\"banner-action\">" + escapeHTML(actionLabel) + "</button>" : "") +
+    "<button class=\"banner-close\" title=\"Dismiss\">✕</button></div>";
+  const actionBtn = area.querySelector(".banner-action");
+  if (actionBtn && actionFn) {
+    actionBtn.addEventListener("click", () => { clearBanner(); actionFn(); });
+  }
+  area.querySelector(".banner-close").addEventListener("click", () => {
+    dismissedBanners.add(id);
+    clearBanner();
+  });
+}
+
+function clearBanner() {
+  currentBannerId = null;
+  const area = el("banner-area");
+  if (area) area.innerHTML = "";
+}
+
+function showOfflineBanner() {
+  showBanner("offline",
+    "Cannot reach the local yt-manage server — is `yt-manage serve` still running?",
+    "Retry", () => { loadStatus(); });
+}
+
+// Long-task progress centre (item 64): a fixed corner panel listing
+// the tasks still running; the rest of the UI stays usable.
+const activeTasks = new Map();
+let taskTimer = null;
+
+function startTask(id, label) {
+  activeTasks.set(id, { label, started: Date.now() });
+  if (!taskTimer) taskTimer = setInterval(renderTasks, 500);
+  renderTasks();
+}
+
+function endTask(id) {
+  activeTasks.delete(id);
+  if (activeTasks.size === 0 && taskTimer) {
+    clearInterval(taskTimer);
+    taskTimer = null;
+  }
+  renderTasks();
+}
+
+function renderTasks() {
+  const panel = el("progress-centre");
+  if (!panel) return;
+  if (activeTasks.size === 0) {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    return;
+  }
+  panel.classList.remove("hidden");
+  panel.innerHTML = Array.from(activeTasks.values()).map((task) =>
+    "<div class=\"task-row\"><span class=\"spinner\"></span>" +
+    "<span class=\"task-label\">" + escapeHTML(task.label) + "</span>" +
+    "<span class=\"task-elapsed\">" + formatElapsed(Date.now() - task.started) + "</span></div>").join("");
+}
+
+// Quota meter (item 66): header bar fed by /api/status and
+// /api/settings, amber over 80%, red over 100%, banner when exhausted.
+function renderQuota(source) {
+  const meter = el("quota-meter");
+  if (!meter || !source) return;
+  const used = source.quotaUsed;
+  const budget = source.quotaBudget;
+  if (used === undefined || used === null || !budget) {
+    meter.classList.add("hidden");
+    return;
+  }
+  meter.classList.remove("hidden");
+  const pct = Math.round((used / budget) * 100);
+  el("quota-label").textContent = "Quota today: " + used + " / " + budget;
+  const fill = el("quota-fill");
+  fill.style.width = Math.min(100, pct) + "%";
+  fill.className = "quota-fill" + (pct > 100 ? " is-over" : pct > 80 ? " is-warn" : "");
+  if (used >= budget) {
+    showBanner("quota",
+      "Today's YouTube API quota is used up (" + used + " / " + budget + "). Syncs and edits will fail until the quota resets.",
+      "Open Settings", () => navigate("settings"));
+  }
 }
 
 // ------------------------------------------------------- text highlight
@@ -257,6 +443,8 @@ function onEnterSection(section) {
   if (section === "schedules") loadSchedules();
   if (section === "comments") loadComments();
   if (section === "accounts") loadAccounts();
+  if (section === "history") loadHistory();
+  if (section === "settings") loadSettings();
 }
 
 window.addEventListener("hashchange", () => {
@@ -325,6 +513,7 @@ function setBadge(id, count) {
 }
 
 function renderStatus(status) {
+  renderQuota(status);
   setBadge("badge-videos", status.videoCount);
   setBadge("badge-episodes", status.episodeCount);
   setBadge("badge-schedules", status.scheduleCount);
@@ -476,23 +665,28 @@ el("demo-seed-btn").addEventListener("click", async () => {
     const data = await api("POST", "/api/demo/seed", {});
     setStatus("demo-status",
       "Demo loaded: " + data.videos + " videos, " + data.episodes + " episodes, " + data.playlists + " playlists.", "ok");
+    showToast("Demo channel loaded: " + data.videos + " videos, " + data.episodes + " episodes, " + data.playlists + " playlists", "ok");
     state.videosLoaded = false;
     await loadStatus();
   } catch (err) {
-    setStatus("demo-status", err.message, "error");
+    setStatus("demo-status", friendlyError(err), "error");
+    showErrorToast(err, "home");
   }
 });
 
 el("demo-clear-btn").addEventListener("click", async () => {
+  if (!window.confirm("Remove all demo data? This deletes only the demo channel and its sample content — your real accounts and channels are not touched.")) return;
   setStatus("demo-status", "Removing demo data...");
   try {
     await api("POST", "/api/demo/clear", {});
     setStatus("demo-status", "Demo data removed.", "ok");
+    showToast("Demo data removed", "ok");
     state.videosLoaded = false;
     await loadStatus();
     if (state.section === "videos") loadVideos();
   } catch (err) {
-    setStatus("demo-status", err.message, "error");
+    setStatus("demo-status", friendlyError(err), "error");
+    showErrorToast(err, "home");
   }
 });
 
@@ -545,6 +739,7 @@ function renderSyncResult(container, data) {
 async function runSync(button, progressId, resultId) {
   if (state.syncing) return;
   state.syncing = true;
+  startTask("sync", "Syncing accounts");
   if (button) button.disabled = true;
   const spinner = el("sync-spinner");
   if (spinner && progressId === "sync-progress") spinner.classList.remove("hidden");
@@ -568,15 +763,24 @@ async function runSync(button, progressId, resultId) {
     if (resultId === "sync-result") {
       setStatus("account-status", hasErrors ? "Sync finished with errors" : "Sync complete", hasErrors ? "error" : "ok");
     }
+    if (hasErrors) {
+      showBanner("sync-errors",
+        "Sync finished with errors for some accounts — nothing was changed for the accounts that failed.",
+        "Open Accounts", () => navigate("accounts"));
+    } else {
+      showToast("Sync complete in " + formatElapsed(Date.now() - started), "ok");
+    }
     state.videosLoaded = false;
     await loadStatus();
     if (state.section === "accounts") loadAccounts();
   } catch (err) {
-    if (progress) { progress.textContent = err.message; progress.className = "status-line error"; }
-    if (resultId === "sync-result") setStatus("account-status", err.message, "error");
+    if (progress) { progress.textContent = friendlyError(err); progress.className = "status-line error"; }
+    if (resultId === "sync-result") setStatus("account-status", friendlyError(err), "error");
+    showErrorToast(err, "accounts");
   } finally {
     clearInterval(timer);
     state.syncing = false;
+    endTask("sync");
     if (button) button.disabled = false;
     if (spinner) spinner.classList.add("hidden");
   }
@@ -638,7 +842,7 @@ async function loadVideos() {
     renderVideoEmpty(data.count || 0, vs);
     setStatus("video-status", data.count + " video(s)", "ok");
   } catch (err) {
-    setStatus("video-status", err.message, "error");
+    setStatus("video-status", friendlyError(err), "error");
   }
 }
 
@@ -953,7 +1157,7 @@ async function runSearchAll() {
     state.searchAll = data;
     renderSearchAll(query, data);
   } catch (err) {
-    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(err.message) + "</p>";
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
   }
 }
 
@@ -1024,7 +1228,7 @@ el("search-all-results").addEventListener("click", async (event) => {
       navigate("videos");
       openDrawer(video);
     } catch (err) {
-      setStatus("video-status", err.message, "error");
+      setStatus("video-status", friendlyError(err), "error");
     }
   }
 });
@@ -1050,6 +1254,7 @@ function openDrawer(video) {
 // Rename history in the drawer (item 38).
 async function loadVideoHistory(videoId) {
   const box = el("drawer-history");
+  el("drawer-undo-btn").classList.add("hidden");
   box.innerHTML = "<p class=\"muted-text\">Loading history…</p>";
   try {
     const entries = await api("GET", "/api/videos/" + videoId + "/history");
@@ -1058,6 +1263,7 @@ async function loadVideoHistory(videoId) {
       box.innerHTML = "<p class=\"muted-text\">No recorded renames yet</p>";
       return;
     }
+    el("drawer-undo-btn").classList.remove("hidden");
     box.innerHTML = entries.map((entry) =>
       "<div class=\"history-entry\"><div class=\"history-change\">" + escapeHTML(entry.oldTitle) +
       " <span class=\"move-arrow\">→</span> " + escapeHTML(entry.newTitle) + "</div>" +
@@ -1069,6 +1275,27 @@ async function loadVideoHistory(videoId) {
     }
   }
 }
+
+// Undo the most recent rename for the drawer's video (item 62).
+el("drawer-undo-btn").addEventListener("click", async () => {
+  const id = el("video-edit-form").dataset.videoId;
+  if (!id) return;
+  const button = el("drawer-undo-btn");
+  button.disabled = true;
+  try {
+    const updated = await api("POST", "/api/videos/" + id + "/undo-title");
+    el("edit-title").value = updated.title || "";
+    showToast("Title restored to “" + (updated.title || "") + "”", "ok");
+    setStatus("edit-status", "Rename undone: " + (updated.title || ""), "ok");
+    await loadVideos();
+    loadVideoHistory(Number(id));
+  } catch (err) {
+    setStatus("edit-status", friendlyError(err), "error");
+    showErrorToast(err, "videos");
+  } finally {
+    button.disabled = false;
+  }
+});
 
 function closeDrawer() {
   el("video-drawer").classList.remove("open");
@@ -1095,7 +1322,7 @@ el("video-edit-form").addEventListener("submit", async (event) => {
     setStatus("edit-status", "Saved: " + updated.title, "ok");
     await loadVideos();
   } catch (err) {
-    setStatus("edit-status", err.message, "error");
+    setStatus("edit-status", friendlyError(err), "error");
   }
 });
 
@@ -1209,8 +1436,9 @@ el("recipe-save-btn").addEventListener("click", async () => {
     const saved = state.recipes.filter((item) => item.name === name).pop();
     renderRecipes(saved ? saved.id : "");
     setStatus("video-status", "Recipe “" + name + "” saved", "ok");
+    showToast("Recipe “" + name + "” saved", "ok");
   } catch (err) {
-    setStatus("video-status", err.message, "error");
+    setStatus("video-status", friendlyError(err), "error");
   }
 });
 
@@ -1221,8 +1449,9 @@ el("recipe-delete-btn").addEventListener("click", async () => {
     state.recipes = await api("DELETE", "/api/rename-recipes/" + id);
     renderRecipes("");
     setStatus("video-status", "Recipe deleted", "ok");
+    showToast("Recipe deleted", "ok");
   } catch (err) {
-    setStatus("video-status", err.message, "error");
+    setStatus("video-status", friendlyError(err), "error");
   }
 });
 
@@ -1318,13 +1547,14 @@ el("bulk-plan-btn").addEventListener("click", async () => {
     renderBulkPlan();
     setStatus("video-status", (data.changes || []).length + " change(s) planned", "ok");
   } catch (err) {
-    setStatus("video-status", err.message, "error");
+    setStatus("video-status", friendlyError(err), "error");
   }
 });
 
 async function applyPlanIds(ids, label) {
   if (!state.bulkPlan || ids.length === 0) return;
   setStatus("video-status", label + "...");
+  startTask("bulk", label);
   ["bulk-apply-btn", "bulk-apply-all-btn", "bulk-apply-first-btn", "bulk-retry-btn"].forEach((id) => { el(id).disabled = true; });
   try {
     const data = await api("POST", "/api/videos/bulk-edit", {
@@ -1349,11 +1579,17 @@ async function applyPlanIds(ids, label) {
     setStatus("video-status",
       "Applied " + appliedNow + ", failed " + failedNow + ", " + (data.remaining || 0) + " remaining in plan",
       failedNow ? "error" : "ok");
+    if (appliedNow > 0 || failedNow > 0) {
+      showToast("Renamed " + appliedNow + " video(s)" + (failedNow ? ", " + failedNow + " failed" : ""), failedNow ? "error" : "ok");
+    }
     await loadVideos();
     loadStatus();
   } catch (err) {
-    setStatus("video-status", err.message, "error");
+    setStatus("video-status", friendlyError(err), "error");
+    showErrorToast(err, "videos");
     updatePlanLabels();
+  } finally {
+    endTask("bulk");
   }
 }
 
@@ -1416,8 +1652,9 @@ el("video-save-search-btn").addEventListener("click", async () => {
     });
     await renderSavedSearches();
     setStatus("video-status", "Saved search “" + name + "”", "ok");
+    showToast("Saved search “" + name + "”", "ok");
   } catch (err) {
-    setStatus("video-status", err.message, "error");
+    setStatus("video-status", friendlyError(err), "error");
   }
 });
 
@@ -1428,6 +1665,7 @@ el("saved-search-list").addEventListener("click", async (event) => {
     try {
       state.savedSearches = await api("DELETE", "/api/saved-searches/" + del.dataset.savedDel);
       await renderSavedSearches();
+      showToast("Saved search deleted", "ok");
     } catch (err) { /* list stays as-is */ }
     return;
   }
@@ -1537,7 +1775,7 @@ async function loadEpisodes() {
     renderEpisodeBoard();
     setStatus("episode-status", state.episodes.length + " episode(s)", "ok");
   } catch (err) {
-    setStatus("episode-status", err.message, "error");
+    setStatus("episode-status", friendlyError(err), "error");
   }
 }
 
@@ -1554,7 +1792,7 @@ el("episode-list").addEventListener("click", async (event) => {
       setStatus("episode-status", "Episode split", "ok");
       await loadEpisodes();
     } catch (err) {
-      setStatus("episode-status", err.message, "error");
+      setStatus("episode-status", friendlyError(err), "error");
     }
     return;
   }
@@ -1601,7 +1839,7 @@ el("episode-merge-btn").addEventListener("click", async () => {
     await loadEpisodes();
     loadStatus();
   } catch (err) {
-    setStatus("episode-status", err.message, "error");
+    setStatus("episode-status", friendlyError(err), "error");
   }
 });
 
@@ -1646,7 +1884,7 @@ el("episode-list").addEventListener("drop", async (event) => {
     renderEpisodeBoard();
     setStatus("episode-status", "Parts resequenced", "ok");
   } catch (err) {
-    setStatus("episode-status", err.message, "error");
+    setStatus("episode-status", friendlyError(err), "error");
     await loadEpisodes();
   }
 });
@@ -1766,7 +2004,7 @@ async function loadSchedulePlan() {
     state.schedulePlanEpisodeId = state.currentEpisodeId;
     renderSchedulePlan();
   } catch (err) {
-    setStatus("schedule-status", err.message, "error");
+    setStatus("schedule-status", friendlyError(err), "error");
   }
 }
 
@@ -1803,13 +2041,15 @@ el("schedule-form").addEventListener("submit", async (event) => {
       includePublic: el("schedule-public").checked,
     });
     setStatus("schedule-status", "Applied " + data.applied + ", skipped public " + data.skippedPublic, "ok");
+    showToast("Schedule applied: " + data.applied + " video(s) scheduled" +
+      (data.skippedPublic ? ", " + data.skippedPublic + " public skipped" : ""), "ok");
     el("schedule-result").innerHTML = (data.entries || []).map((entry) =>
       "<li>" + escapeHTML(entry.ytVideoId) + " → " + escapeHTML(entry.publishAt) + "</li>").join("");
     state.schedulePlan = null;
     el("schedule-plan-preview").classList.add("hidden");
     loadStatus();
   } catch (err) {
-    setStatus("schedule-status", err.message, "error");
+    setStatus("schedule-status", friendlyError(err), "error");
   }
 });
 
@@ -1905,7 +2145,7 @@ async function loadSchedules() {
     renderCalendar();
     setStatus("schedules-status", rules.length + " rule(s)", "ok");
   } catch (err) {
-    setStatus("schedules-status", err.message, "error");
+    setStatus("schedules-status", friendlyError(err), "error");
   }
 }
 
@@ -1929,7 +2169,7 @@ async function loadPlaylists() {
       "<p>Playlists you create in YouTube Studio appear here after a sync — or create one with the form below and it is made on YouTube right away.</p></div>";
     setStatus("playlist-status", playlists.length + " playlist(s)", "ok");
   } catch (err) {
-    setStatus("playlist-status", err.message, "error");
+    setStatus("playlist-status", friendlyError(err), "error");
   }
 }
 
@@ -1948,7 +2188,7 @@ el("playlist-list").addEventListener("click", async (event) => {
     setStatus("playlist-status", "Saved", "ok");
     await loadPlaylists();
   } catch (err) {
-    setStatus("playlist-status", err.message, "error");
+    setStatus("playlist-status", friendlyError(err), "error");
   }
 });
 
@@ -1966,7 +2206,7 @@ el("playlist-create-form").addEventListener("submit", async (event) => {
     el("playlist-channel").value = el("playlist-new-channel").value;
     await loadPlaylists();
   } catch (err) {
-    setStatus("playlist-create-status", err.message, "error");
+    setStatus("playlist-create-status", friendlyError(err), "error");
   }
 });
 
@@ -1986,7 +2226,7 @@ async function loadComments() {
       "<p>yt-manage posts the first comment on a video from the CLI: <code>yt-manage comment post</code>. Posted comments are tracked here; pinning stays a manual YouTube Studio step.</p></div>";
     setStatus("comments-status", comments.length + " comment(s)", "ok");
   } catch (err) {
-    setStatus("comments-status", err.message, "error");
+    setStatus("comments-status", friendlyError(err), "error");
   }
 }
 
@@ -2017,7 +2257,7 @@ async function loadABTests() {
       "<p>An A/B test tries two titles on one video. Create one with the form below, take snapshots as views come in, then pick the winner and yt-manage applies it.</p></div>";
     setStatus("ab-status", tests.length + " test(s)", "ok");
   } catch (err) {
-    setStatus("ab-status", err.message, "error");
+    setStatus("ab-status", friendlyError(err), "error");
   }
 }
 
@@ -2038,7 +2278,7 @@ el("ab-list").addEventListener("click", async (event) => {
       await loadABTests();
     }
   } catch (err) {
-    setStatus("ab-status", err.message, "error");
+    setStatus("ab-status", friendlyError(err), "error");
   }
 });
 
@@ -2055,7 +2295,435 @@ el("ab-create-form").addEventListener("submit", async (event) => {
     el("ab-video-id").value = el("ab-new-video").value;
     await loadABTests();
   } catch (err) {
-    setStatus("ab-create-status", err.message, "error");
+    setStatus("ab-create-status", friendlyError(err), "error");
+  }
+});
+
+// --------------------------------------------------------------- history
+// Global activity timeline (items 58, 63): grouped by day, filterable
+// by kind, with undo for schedule entries.
+async function loadHistory() {
+  setStatus("history-status", "Loading...");
+  try {
+    const path = "/api/activity?limit=100" + (state.historyKind ? "&kind=" + encodeURIComponent(state.historyKind) : "");
+    const entries = await api("GET", path);
+    renderHistory(entries || []);
+    const count = (entries || []).length;
+    setStatus("history-status", count + (count === 1 ? " entry" : " entries"), "ok");
+  } catch (err) {
+    setStatus("history-status", friendlyError(err), "error");
+    showErrorToast(err, "history");
+  }
+}
+
+function historyDayLabel(iso) {
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return "Unknown date";
+  if (date.toDateString() === new Date().toDateString()) return "Today";
+  const yesterday = new Date(Date.now() - 86400000);
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+}
+
+function renderHistory(entries) {
+  const box = el("history-list");
+  if (entries.length === 0) {
+    box.innerHTML = "<div class=\"empty-state\"><h3>No activity yet</h3>" +
+      "<p>Syncs, renames, schedules and setting changes are recorded here as they happen — across all accounts.</p></div>";
+    return;
+  }
+  let html = "";
+  let lastDay = null;
+  entries.forEach((entry) => {
+    const day = historyDayLabel(entry.createdAt);
+    if (day !== lastDay) {
+      html += "<h3 class=\"history-day\">" + escapeHTML(day) + "</h3>";
+      lastDay = day;
+    }
+    const time = entry.createdAt
+      ? new Date(entry.createdAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+      : "";
+    html += "<div class=\"history-item" + (entry.isUndone ? " is-undone" : "") + "\">" +
+      "<span class=\"history-time\">" + escapeHTML(time) + "</span>" +
+      "<span class=\"pill history-kind\">" + escapeHTML(entry.kind || "") + "</span>" +
+      "<span class=\"history-summary\">" + escapeHTML(entry.summary || "") +
+      (entry.detail ? "<span class=\"history-detail\">" + escapeHTML(entry.detail) + "</span>" : "") +
+      (entry.kind === "rename" && !entry.isUndone ? "<span class=\"history-note\">Undo from the video drawer</span>" : "") +
+      (entry.isUndone ? "<span class=\"history-note\">Undone</span>" : "") +
+      "</span>" +
+      (entry.canUndo && entry.kind === "schedule" && !entry.isUndone
+        ? "<button data-undo-activity=\"" + entry.id + "\">Undo schedule</button>" : "") +
+      "</div>";
+  });
+  box.innerHTML = html;
+}
+
+el("history-load-btn").addEventListener("click", loadHistory);
+
+el("history-kind-chips").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-kind]");
+  if (!chip) return;
+  state.historyKind = chip.dataset.kind || "";
+  document.querySelectorAll("#history-kind-chips .chip").forEach((item) =>
+    item.classList.toggle("is-active", item === chip));
+  loadHistory();
+});
+
+el("history-list").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-undo-activity]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await api("POST", "/api/activity/" + button.dataset.undoActivity + "/undo");
+    showToast("Schedule undone", "ok");
+    await loadHistory();
+    loadStatus();
+  } catch (err) {
+    showErrorToast(err, "history");
+    button.disabled = false;
+  }
+});
+
+// --------------------------------------------------------------- settings
+// A real settings screen (items 51-60): grouped rows rendered from
+// /api/settings, applied instantly, with defaults shown, per-account
+// overrides, fenced secrets, and export/import.
+function isSecretSetting(setting) {
+  return setting.type === "secret" || setting.type === "password";
+}
+
+function settingValueString(setting) {
+  return setting.value === undefined || setting.value === null ? "" : String(setting.value);
+}
+
+function settingDefaultString(setting) {
+  return setting.default === undefined || setting.default === null ? "" : String(setting.default);
+}
+
+function settingChanged(setting) {
+  if (isSecretSetting(setting)) return !!setting.isSet;
+  return settingValueString(setting) !== settingDefaultString(setting);
+}
+
+async function loadSettings() {
+  setStatus("settings-status", "Loading settings...");
+  try {
+    if (!state.accounts) {
+      try { state.accounts = await api("GET", "/api/accounts"); } catch (err) { state.accounts = []; }
+    }
+    state.settingsData = await api("GET", "/api/settings");
+    renderSettings();
+    setStatus("settings-status", "");
+  } catch (err) {
+    setStatus("settings-status", friendlyError(err), "error");
+    showErrorToast(err, "settings");
+  }
+}
+
+function renderSettings() {
+  const data = state.settingsData;
+  if (!data) return;
+  const groupsBox = el("settings-groups");
+  const advBox = el("settings-advanced-rows");
+  groupsBox.innerHTML = "";
+  advBox.innerHTML = "";
+  const groups = new Map();
+  (data.settings || []).forEach((setting) => {
+    if (isSecretSetting(setting)) {
+      advBox.appendChild(settingRow(setting));
+      return;
+    }
+    const group = setting.group || "General";
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(setting);
+  });
+  groups.forEach((rows, name) => {
+    const card = document.createElement("div");
+    card.className = "card setting-group";
+    card.innerHTML = "<h2>" + escapeHTML(name) + "</h2>";
+    rows.forEach((setting) => card.appendChild(settingRow(setting)));
+    groupsBox.appendChild(card);
+  });
+  if (advBox.children.length === 0) {
+    advBox.innerHTML = "<p class=\"muted-text\">No stored secrets.</p>";
+  }
+  renderPerAccountSettings();
+  applySettingsSearch();
+  renderQuota(data);
+}
+
+function settingRow(setting) {
+  const row = document.createElement("div");
+  row.className = "setting-row";
+  row.dataset.key = setting.key;
+  row.dataset.serverValue = isSecretSetting(setting) ? "" : settingValueString(setting);
+  row.dataset.search = ((setting.label || "") + " " + setting.key + " " + (setting.group || "")).toLowerCase();
+  const changed = settingChanged(setting);
+  let control = "";
+  if (isSecretSetting(setting)) {
+    control = "<input type=\"password\" class=\"setting-input\" autocomplete=\"new-password\" placeholder=\"" +
+      (setting.isSet ? "•••••••• (stored)" : "Not set") + "\">";
+  } else if (setting.type === "number" || setting.type === "int" || setting.type === "port") {
+    control = "<input type=\"number\" class=\"setting-input\" value=\"" + escapeHTML(settingValueString(setting)) + "\">";
+  } else if (setting.type === "bool" || setting.type === "boolean") {
+    control = "<input type=\"checkbox\" class=\"setting-input\"" + (settingValueString(setting) === "true" ? " checked" : "") + ">";
+  } else {
+    control = "<input type=\"text\" class=\"setting-input\" value=\"" + escapeHTML(settingValueString(setting)) + "\">";
+  }
+  row.innerHTML =
+    "<div class=\"setting-head\"><span class=\"setting-label\">" + escapeHTML(setting.label || setting.key) + "</span>" +
+    "<span class=\"setting-changed pill" + (changed ? "" : " hidden") + "\">changed</span>" +
+    "<span class=\"setting-saved hidden\">Saved ✓</span></div>" +
+    "<div class=\"setting-controls\">" + control +
+    "<button class=\"setting-reset" + (changed ? "" : " hidden") + "\">Reset to default</button></div>" +
+    "<div class=\"setting-meta\">Default: " + escapeHTML(settingDefaultString(setting) || "(empty)") +
+    (isSecretSetting(setting)
+      ? " · " + (setting.isSet ? "A value is stored — it is never shown" : "No value stored")
+      : "") +
+    " · <code>" + escapeHTML(setting.key) + "</code></div>" +
+    "<div class=\"setting-error hidden\"></div>";
+  wireSettingRow(row, setting);
+  return row;
+}
+
+function wireSettingRow(row, setting) {
+  const input = row.querySelector(".setting-input");
+  let timer = null;
+  const save = () => saveSetting(row, setting);
+  if (input.type === "checkbox") {
+    input.addEventListener("change", save);
+    return;
+  }
+  input.addEventListener("input", () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(save, 600);
+  });
+  input.addEventListener("change", () => {
+    if (timer) clearTimeout(timer);
+    save();
+  });
+  row.querySelector(".setting-reset").addEventListener("click", () => resetSetting(row, setting));
+}
+
+function flashSaved(row) {
+  const tick = row.querySelector(".setting-saved");
+  if (!tick) return;
+  tick.classList.remove("hidden");
+  setTimeout(() => tick.classList.add("hidden"), 1600);
+}
+
+function showSettingError(row, err) {
+  const box = row.querySelector(".setting-error");
+  if (!box) return;
+  box.textContent = friendlyError(err);
+  box.classList.remove("hidden");
+}
+
+function clearSettingError(row) {
+  const box = row.querySelector(".setting-error");
+  if (!box) return;
+  box.textContent = "";
+  box.classList.add("hidden");
+}
+
+function refreshRowFromData(row, key) {
+  const updated = (state.settingsData.settings || []).find((item) => item.key === key);
+  if (!updated) return;
+  row.dataset.serverValue = isSecretSetting(updated) ? "" : settingValueString(updated);
+  const changed = settingChanged(updated);
+  row.querySelector(".setting-changed").classList.toggle("hidden", !changed);
+  row.querySelector(".setting-reset").classList.toggle("hidden", !changed);
+}
+
+async function saveSetting(row, setting) {
+  const input = row.querySelector(".setting-input");
+  let value;
+  if (input.type === "checkbox") value = input.checked ? "true" : "false";
+  else value = input.value;
+  if (isSecretSetting(setting)) {
+    if (!value) return;
+    if (!window.confirm("Change the stored value for “" + (setting.label || setting.key) + "”? The old value cannot be recovered.")) {
+      input.value = "";
+      return;
+    }
+  } else if (row.dataset.lastSent === value) {
+    return;
+  }
+  row.dataset.lastSent = value;
+  clearSettingError(row);
+  try {
+    const data = await api("PUT", "/api/settings", { key: setting.key, value: String(value) });
+    state.settingsData = data;
+    if (isSecretSetting(setting)) {
+      input.value = "";
+      input.placeholder = "•••••••• (stored)";
+    }
+    refreshRowFromData(row, setting.key);
+    flashSaved(row);
+    renderQuota(data);
+  } catch (err) {
+    delete row.dataset.lastSent;
+    if (input.type === "checkbox") input.checked = row.dataset.serverValue === "true";
+    else if (!isSecretSetting(setting)) input.value = row.dataset.serverValue || "";
+    else input.value = "";
+    showSettingError(row, err);
+    showErrorToast(err, "settings");
+  }
+}
+
+async function resetSetting(row, setting) {
+  clearSettingError(row);
+  try {
+    const data = await api("POST", "/api/settings/reset", { key: setting.key });
+    state.settingsData = data;
+    const updated = (data.settings || []).find((item) => item.key === setting.key);
+    if (updated) {
+      const fresh = settingRow(updated);
+      row.replaceWith(fresh);
+      flashSaved(fresh);
+    }
+    renderQuota(data);
+    showToast("“" + (setting.label || setting.key) + "” reset to default", "ok");
+  } catch (err) {
+    showSettingError(row, err);
+    showErrorToast(err, "settings");
+  }
+}
+
+// Per-account overrides (item 54): notify-on-publish + sync interval,
+// "inherited" while both are at their inherit values.
+function renderPerAccountSettings() {
+  const box = el("settings-per-account");
+  const data = state.settingsData;
+  if (!data) { box.innerHTML = ""; return; }
+  const accounts = state.accounts || [];
+  if (accounts.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">No accounts connected yet — connect one and its overrides appear here.</p>";
+    return;
+  }
+  const per = data.perAccount || {};
+  box.innerHTML = "";
+  accounts.forEach((account) => {
+    const cfg = per[String(account.id)] || per[account.id] || {};
+    const notify = !!cfg.notifyOnPublish;
+    const interval = Number(cfg.syncIntervalMin || 0);
+    const row = document.createElement("div");
+    row.className = "setting-row per-account-row";
+    row.innerHTML =
+      "<div class=\"setting-head\"><span class=\"setting-label\">" + escapeHTML(account.label || ("Account " + account.id)) + "</span>" +
+      "<span class=\"setting-changed pill inherited-tag" + (!notify && interval === 0 ? "" : " hidden") + "\">inherited</span>" +
+      "<span class=\"setting-saved hidden\">Saved ✓</span></div>" +
+      "<div class=\"setting-controls per-account-controls\">" +
+      "<label class=\"check\"><input type=\"checkbox\" class=\"pa-notify\"" + (notify ? " checked" : "") + "> Notify on publish</label>" +
+      "<label class=\"pa-interval-label\">Sync interval (minutes; 0 = inherited) " +
+      "<input type=\"number\" class=\"pa-interval\" min=\"0\" step=\"1\" value=\"" + interval + "\"></label></div>" +
+      "<div class=\"setting-error hidden\"></div>";
+    const notifyBox = row.querySelector(".pa-notify");
+    const intervalInput = row.querySelector(".pa-interval");
+    notifyBox.addEventListener("change", () =>
+      savePerAccount(row, account.id, "notify_on_publish", notifyBox.checked ? "true" : "false"));
+    let timer = null;
+    intervalInput.addEventListener("input", () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const minutes = Math.max(0, Number(intervalInput.value || 0));
+        savePerAccount(row, account.id, "sync_interval_min", String(minutes));
+      }, 600);
+    });
+    box.appendChild(row);
+  });
+}
+
+async function savePerAccount(row, accountId, key, value) {
+  clearSettingError(row);
+  try {
+    const data = await api("PUT", "/api/settings", { key, value: String(value), accountId });
+    state.settingsData = data;
+    const notify = row.querySelector(".pa-notify").checked;
+    const interval = Number(row.querySelector(".pa-interval").value || 0);
+    row.querySelector(".inherited-tag").classList.toggle("hidden", !(!notify && interval === 0));
+    flashSaved(row);
+  } catch (err) {
+    showSettingError(row, err);
+    showErrorToast(err, "settings");
+    renderPerAccountSettings();
+  }
+}
+
+// Settings search (item 53): filter rows by label, key or group.
+function applySettingsSearch() {
+  const input = el("settings-search");
+  if (!input) return;
+  const query = input.value.trim().toLowerCase();
+  document.querySelectorAll("#settings-groups .setting-row, #settings-advanced-rows .setting-row").forEach((row) => {
+    row.classList.toggle("hidden", !!query && (row.dataset.search || "").indexOf(query) === -1);
+  });
+  document.querySelectorAll("#settings-groups .setting-group").forEach((card) => {
+    const anyVisible = Array.from(card.querySelectorAll(".setting-row")).some((row) => !row.classList.contains("hidden"));
+    card.classList.toggle("hidden", !!query && !anyVisible);
+  });
+  if (query) {
+    const advMatch = Array.from(el("settings-advanced-rows").querySelectorAll(".setting-row"))
+      .some((row) => !row.classList.contains("hidden"));
+    if (advMatch) el("settings-advanced").open = true;
+  }
+}
+
+el("settings-search").addEventListener("input", applySettingsSearch);
+
+// Export / import (item 57): secrets are excluded by the server and
+// the exclusion is surfaced, never silent.
+el("settings-export-btn").addEventListener("click", async () => {
+  try {
+    const data = await api("POST", "/api/settings/export", {});
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "yt-manage-settings.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    const excluded = data.excluded || [];
+    const note = excluded.length
+      ? "Settings exported. Excluded secrets (never exported): " + excluded.join(", ")
+      : "Settings exported.";
+    setStatus("settings-status", note, "ok");
+    showToast(note, "ok");
+  } catch (err) {
+    setStatus("settings-status", friendlyError(err), "error");
+    showErrorToast(err, "settings");
+  }
+});
+
+el("settings-import-btn").addEventListener("click", () => el("settings-import-file").click());
+
+el("settings-import-file").addEventListener("change", async () => {
+  const file = el("settings-import-file").files[0];
+  el("settings-import-file").value = "";
+  if (!file) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch (err) {
+    setStatus("settings-status", "That file is not valid JSON — nothing was imported.", "error");
+    return;
+  }
+  const settings = parsed.settings || parsed;
+  const excluded = parsed.excluded || [];
+  if (!window.confirm("Import these settings? This overwrites your current settings. Secrets are never imported.")) return;
+  try {
+    state.settingsData = await api("POST", "/api/settings/import", { settings });
+    renderSettings();
+    const note = "Settings imported." + (excluded.length
+      ? " Excluded from the file and not imported: " + excluded.join(", ") + "."
+      : " Note: secrets such as mail.password are never imported.");
+    setStatus("settings-status", note, "ok");
+    showToast(note, "ok");
+  } catch (err) {
+    setStatus("settings-status", friendlyError(err), "error");
+    showErrorToast(err, "settings");
   }
 });
 
@@ -2064,6 +2732,7 @@ async function loadAccounts() {
   setStatus("account-status", "Loading...");
   try {
     const accounts = await api("GET", "/api/accounts");
+    state.accounts = accounts;
     const rows = [];
     accounts.forEach((account) => {
       if (!account.channels || account.channels.length === 0) {
@@ -2084,7 +2753,7 @@ async function loadAccounts() {
       : "";
     setStatus("account-status", accounts.length + " account(s)", "ok");
   } catch (err) {
-    setStatus("account-status", err.message, "error");
+    setStatus("account-status", friendlyError(err), "error");
   }
 }
 

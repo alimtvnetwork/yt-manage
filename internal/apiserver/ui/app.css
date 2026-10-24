@@ -561,6 +561,149 @@ table.grid tbody tr.keyboard-active { background: #2b3d5f; box-shadow: inset 3px
 .drawer label input, .drawer label textarea { display: block; width: 100%; margin-top: 4px; }
 .sync-table { margin-top: 8px; }
 
+/* Wave 3: quota meter, banner (items 66, 67) */
+.quota-meter { display: flex; flex-direction: column; gap: 3px; min-width: 130px; }
+.quota-meter span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.quota-bar {
+  height: 5px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.quota-fill { height: 100%; background: var(--accent-2); width: 0; transition: width 0.3s ease; }
+.quota-fill.is-warn { background: #d29922; }
+.quota-fill.is-over { background: var(--danger); }
+#banner-area:empty { display: none; }
+.banner {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 14px 20px 0;
+  background: #2a2110;
+  border: 1px solid #8a6d00;
+  color: #f0d48a;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  animation: fade-slide 0.25s ease both;
+}
+.banner-text { flex: 1; min-width: 220px; }
+.banner-close { background: transparent; border-color: transparent; color: inherit; padding: 4px 8px; }
+.banner-close:hover { background: transparent; color: var(--text); }
+
+/* Wave 3: toasts and progress centre (items 61, 64, 69) */
+.toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, 92vw);
+}
+.toast {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent-2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  animation: toast-in 0.25s ease both;
+}
+.toast.toast-error { border-left-color: var(--danger); }
+.toast.toast-out { opacity: 0; transform: translateY(6px); transition: opacity 0.3s ease, transform 0.3s ease; }
+.toast-text { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
+.toast-close { background: transparent; border-color: transparent; color: var(--muted); padding: 2px 7px; }
+.toast-close:hover { color: var(--text); background: transparent; }
+.toast-extra { flex-basis: 100%; }
+.toast-actions { display: flex; gap: 6px; }
+.toast-actions button { font-size: 12.5px; padding: 4px 10px; }
+.toast-details {
+  background: #0b0e12;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 180px;
+  overflow-y: auto;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.progress-centre {
+  position: fixed;
+  left: 18px;
+  bottom: 18px;
+  z-index: 40;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 240px;
+  animation: toast-in 0.25s ease both;
+}
+.task-row { display: flex; gap: 10px; align-items: center; font-size: 14px; }
+.task-label { flex: 1; }
+.task-elapsed { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Wave 3: settings screen (items 51-60) */
+#settings-search { flex: 1 1 260px; }
+.setting-group { margin-top: 16px; }
+.setting-row { border-top: 1px solid var(--border); padding: 12px 0; }
+.setting-row:first-of-type { border-top: none; }
+.setting-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.setting-label { font-weight: 600; font-size: 14.5px; }
+.setting-changed { background: #4a3800; border-color: #8a6d00; color: var(--mark); }
+.setting-saved { color: var(--accent-2); font-size: 13px; font-weight: 600; }
+.setting-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.setting-controls input[type="text"],
+.setting-controls input[type="number"],
+.setting-controls input[type="password"] { flex: 1 1 220px; }
+.setting-meta { color: var(--muted); font-size: 12.5px; margin-top: 5px; }
+.setting-meta code { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; color: var(--text); }
+.setting-error { color: var(--danger); font-size: 13px; margin-top: 5px; }
+.advanced-block summary { cursor: pointer; font-size: 17px; font-weight: 650; padding: 2px 0 6px; }
+.per-account-controls label { color: var(--muted); font-size: 14px; display: flex; gap: 8px; align-items: center; }
+.per-account-controls .pa-interval { width: 110px; flex: 0 0 110px !important; }
+.inherited-tag { background: var(--panel-2); color: var(--muted); }
+
+/* Wave 3: history timeline (items 58, 63) */
+.history-day { font-size: 15px; margin: 20px 0 6px; color: var(--muted); }
+.history-item {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  margin: 6px 0;
+  font-size: 14px;
+}
+.history-item.is-undone { opacity: 0.55; }
+.history-time { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 64px; }
+.history-summary { flex: 1; min-width: 200px; overflow-wrap: anywhere; }
+.history-detail { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+.history-note { display: inline-block; color: var(--muted); font-size: 12.5px; margin-left: 8px; font-style: italic; }
+#drawer-undo-btn { margin-bottom: 10px; }
+
 @media (max-width: 860px) {
   .sidebar { width: var(--sidebar-w-collapsed); flex-basis: var(--sidebar-w-collapsed); }
   .nav-label, .badge, .saved-searches, .brand { display: none; }
@@ -577,4 +720,6 @@ table.grid tbody tr.keyboard-active { background: #2b3d5f; box-shadow: inset 3px
     transition-duration: 0.01ms !important;
   }
   .spinner { animation-duration: 1.2s !important; animation-iteration-count: infinite !important; }
+  /* Wave 3 feedback surfaces stay still under reduced motion (item 70) */
+  .toast, .progress-centre, .banner, .quota-fill { animation: none !important; transition: none !important; }
 }

@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/alimtvnetwork/yt-manage/internal/config"
@@ -93,6 +94,8 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 			Videos: result.Videos, Playlists: result.Playlists,
 			UnitsEstimate: result.UnitsEstimate, IsIncremental: result.IsIncremental,
 		})
+		s.addQuota(result.UnitsEstimate)
+		s.recordActivity("sync", fmt.Sprintf("Synced %s: %d videos, %d playlists", result.ChannelTitle, result.Videos, result.Playlists), "")
 	}
 	writeOK(w, response)
 }

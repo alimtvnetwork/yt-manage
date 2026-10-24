@@ -210,6 +210,10 @@ func (s *Server) handleBulkEdit(w http.ResponseWriter, r *http.Request) {
 		delete(s.plans, body.PlanID)
 	}
 	s.mu.Unlock()
+	if applied > 0 {
+		s.recordActivity("rename", fmt.Sprintf("Renamed %d of %d videos", applied, len(stored.plan.Changes)), "")
+		s.addQuota(50 * applied)
+	}
 	writeOK(w, bulkEditResponse{
 		Applied: applied, Total: len(stored.plan.Changes), Results: results,
 		Remaining: len(remaining), PlanKept: len(remaining) > 0,

@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -200,10 +201,26 @@ func (s *Server) handleScheduleEpisode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	undoEntries := make([]scheduleUndoEntry, 0, len(plan.Entries))
+	for _, entry := range plan.Entries {
+		undo := scheduleUndoEntry{
+			VideoID: entry.VideoID, YTVideoID: entry.YTVideoID, ChannelID: episode.ChannelID,
+		}
+		if video, lookupErr := s.store.Videos.GetByID(entry.VideoID); lookupErr == nil {
+			undo.OldPublishAt = formatTimePtr(video.PublishAt)
+			undo.OldVisibility = video.Visibility.String()
+		}
+		undoEntries = append(undoEntries, undo)
+	}
 	applied, err := scheduler.Apply(r.Context(), svc, s.store, plan)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
+	}
+	if applied > 0 {
+		detail, _ := json.Marshal(undoEntries[:applied])
+		s.recordActivity("schedule", fmt.Sprintf("Scheduled %d videos on channel %d", applied, episode.ChannelID), string(detail))
+		s.addQuota(50 * applied)
 	}
 	entries := make([]scheduleEntryDTO, 0, len(plan.Entries))
 	for _, entry := range plan.Entries {

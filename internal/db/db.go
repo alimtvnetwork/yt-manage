@@ -43,7 +43,7 @@ func Open(homeDir string) (*DBs, error) {
 		closeDB(content)
 		return nil, err
 	}
-	system, err := openOne(filepath.Join(dataDir, "system.db"), &model.SyncState{}, &model.Peer{}, &model.EmailLog{}, &model.Setting{})
+	system, err := openOne(filepath.Join(dataDir, "system.db"), &model.SyncState{}, &model.Peer{}, &model.EmailLog{}, &model.Setting{}, &model.ActivityLog{})
 	if err != nil {
 		closeDB(accounts)
 		closeDB(content)

@@ -20,6 +20,7 @@
       <button class="nav-item" data-section="comments"><span class="nav-icon">✎</span><span class="nav-label">Comments</span><span class="badge" id="badge-comments"></span></button>
       <button class="nav-item" data-section="abtests"><span class="nav-icon">A/B</span><span class="nav-label">A/B Tests</span></button>
       <button class="nav-item" data-section="accounts"><span class="nav-icon">◉</span><span class="nav-label">Accounts</span><span class="badge" id="badge-accounts"></span></button>
+      <button class="nav-item" data-section="history"><span class="nav-icon">↩</span><span class="nav-label">History</span></button>
       <button class="nav-item" data-section="settings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
     </nav>
     <div class="saved-searches" id="saved-searches">
@@ -38,12 +39,18 @@
         <span id="scope-label" class="scope-label"></span>
       </div>
       <div class="header-controls">
+        <div id="quota-meter" class="quota-meter hidden" title="YouTube API quota used today">
+          <span id="quota-label">Quota today: –</span>
+          <div class="quota-bar"><div id="quota-fill" class="quota-fill"></div></div>
+        </div>
         <label class="scope-picker">Channel
           <select id="scope-channel"><option value="">All channels</option></select>
         </label>
         <button id="density-toggle" title="Toggle row density">Density: comfortable</button>
       </div>
     </header>
+
+    <div id="banner-area"></div>
 
     <main>
       <!-- HOME -->
@@ -332,18 +339,49 @@
         <div id="sync-result" class="plan-box hidden"></div>
       </section>
 
+      <!-- HISTORY -->
+      <section id="section-history" class="panel">
+        <div class="toolbar">
+          <button id="history-load-btn" class="primary">Refresh history</button>
+        </div>
+        <div class="chips" id="history-kind-chips">
+          <button class="chip is-active" data-kind="">All</button>
+          <button class="chip" data-kind="settings">Settings</button>
+          <button class="chip" data-kind="sync">Sync</button>
+          <button class="chip" data-kind="rename">Rename</button>
+          <button class="chip" data-kind="schedule">Schedule</button>
+        </div>
+        <div class="status-line" id="history-status"></div>
+        <div id="history-list"></div>
+      </section>
+
       <!-- SETTINGS -->
       <section id="section-settings" class="panel">
-        <div class="card">
-          <h2>Detected configuration</h2>
+        <div class="toolbar">
+          <input id="settings-search" type="search" placeholder="Search settings by name, key or group…" autocomplete="off">
+          <button id="settings-export-btn">Export settings</button>
+          <button id="settings-import-btn">Import settings</button>
+          <input id="settings-import-file" type="file" accept=".json,application/json" class="hidden">
+        </div>
+        <div class="status-line" id="settings-status"></div>
+        <div id="settings-groups"></div>
+        <div class="card" id="settings-per-account-card">
+          <h2>Per-account overrides</h2>
+          <p class="muted-text">These apply to one account only. An account with notifications off and a sync interval of 0 inherits the global behaviour.</p>
+          <div id="settings-per-account"></div>
+        </div>
+        <details class="card advanced-block" id="settings-advanced">
+          <summary>Advanced</summary>
+          <p class="muted-text">Dangerous or sensitive values live here. Changing a stored secret asks for confirmation first.</p>
+          <div id="settings-advanced-rows"></div>
           <dl class="kv">
             <dt>OAuth client</dt><dd id="set-oauth">…</dd>
             <dt>Data directory</dt><dd id="set-datadir">…</dd>
           </dl>
-          <p class="muted-text">Read-only: these are detected from your environment and data directory. A full settings screen (sync, email, defaults) arrives in a later wave.</p>
-        </div>
+          <p class="muted-text">Detected automatically from your environment and data directory — read-only. The data directory is chosen at startup (YT_MANAGE_HOME) and cannot be changed from here.</p>
+        </details>
         <div class="card">
-          <h2>Interface preferences</h2>
+          <h2>Interface (this browser)</h2>
           <label>Density
             <select id="set-density">
               <option value="comfortable">Comfortable</option>
@@ -351,7 +389,7 @@
             </select>
           </label>
           <label class="check"><input id="set-sidebar-collapsed" type="checkbox"> Collapse sidebar to icons</label>
-          <p class="muted-text">Preferences apply instantly and are remembered on this machine.</p>
+          <p class="muted-text">Preferences apply instantly and are remembered in this browser only — they are not part of the exported settings.</p>
         </div>
       </section>
     </main>
@@ -381,8 +419,12 @@
     <div class="status-line" id="edit-status"></div>
   </form>
   <h3>Rename history</h3>
+  <button id="drawer-undo-btn" class="hidden">Undo last rename</button>
   <div id="drawer-history" class="history-list"><p class="muted-text">No recorded renames yet</p></div>
 </aside>
+
+<div id="progress-centre" class="progress-centre hidden"></div>
+<div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
 <script src="/app.js"></script>
 </body>

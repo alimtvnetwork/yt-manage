@@ -20,6 +20,7 @@ type Store struct {
 	EmailLogs    EmailLogRepository
 	Settings     SettingRepository
 	TitleHistory TitleHistoryRepository
+	Activity     ActivityRepository
 }
 
 // NewStore builds a Store backed by the four split databases.
@@ -38,5 +39,6 @@ func NewStore(dbs *db.DBs) *Store {
 		EmailLogs:    &emailLogRepository{db: dbs.System},
 		Settings:     &settingRepository{db: dbs.System},
 		TitleHistory: &titleHistoryRepository{db: dbs.Content},
+		Activity:     &activityRepository{db: dbs.System},
 	}
 }

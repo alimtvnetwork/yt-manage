@@ -25,7 +25,7 @@ Spec file: 02-spec/21-app/29-user-experience-200-features/02-first-100-features.
 - [x] Wave 2 (Subtask 02) — Items 26–50: saved/recent searches,
       change-set preview table, template builder, staged apply, episode
       board, calendar schedules, cadence previews.
-- [ ] Wave 3 (Subtask 03) — Items 51–75: real Settings screen + `settings`
+- [x] Wave 3 (Subtask 03) — Items 51–75: real Settings screen + `settings`
       CLI (instant apply, per-account, export/import), toasts, undo,
       history, progress centre, quota meter, multi-select, bulk bar.
 - [ ] Wave 4 (Subtask 04) — Items 76–100: command palette, CLI

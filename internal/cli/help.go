@@ -28,6 +28,7 @@ Commands:
   serve     Start the local REST API and browser UI
   peer      Sync the local cache with another yt-manage instance
   llm       Export training data for LLMs
+  settings  Read and change settings (same names as the UI Settings screen)
   update    Check for and apply yt-manage updates
   version   Print the yt-manage version
 

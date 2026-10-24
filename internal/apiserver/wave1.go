@@ -64,6 +64,8 @@ type statusResponse struct {
 	Channels      []statusChannel    `json:"channels"`
 	Suggestions   []statusSuggestion `json:"suggestions"`
 	Checklist     statusChecklist    `json:"checklist"`
+	QuotaUsed     int                `json:"quotaUsed"`
+	QuotaBudget   int                `json:"quotaBudget"`
 }
 
 // oauthSource reports where the Google OAuth client comes from:
@@ -179,6 +181,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	response.Suggestions = buildSuggestions(response, episodeLikeCount)
+	response.QuotaUsed, _ = s.quotaUsedToday()
+	if cfg, cfgErr := config.LoadSettings(s.home); cfgErr == nil {
+		response.QuotaBudget = cfg.DailyQuotaBudget
+	}
 	writeOK(w, response)
 }
 
