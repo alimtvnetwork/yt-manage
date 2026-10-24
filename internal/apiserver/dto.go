@@ -47,11 +47,14 @@ type accountDTO struct {
 }
 
 type episodePartDTO struct {
-	Sequence   int    `json:"sequence"`
-	PartNumber int    `json:"partNumber"`
-	VideoID    uint   `json:"videoId"`
-	YTVideoID  string `json:"ytVideoId"`
-	Title      string `json:"title"`
+	Sequence    int    `json:"sequence"`
+	PartNumber  int    `json:"partNumber"`
+	VideoID     uint   `json:"videoId"`
+	YTVideoID   string `json:"ytVideoId"`
+	Title       string `json:"title"`
+	Visibility  string `json:"visibility"`
+	PublishAt   string `json:"publishAt"`
+	PublishedAt string `json:"publishedAt"`
 }
 
 type episodeDTO struct {
@@ -63,6 +66,8 @@ type episodeDTO struct {
 	CadenceDays    int              `json:"cadenceDays"`
 	FirstPublishAt string           `json:"firstPublishAt"`
 	Parts          []episodePartDTO `json:"parts"`
+	GapParts       []int            `json:"gapParts"`
+	Warnings       []string         `json:"warnings"`
 }
 
 type playlistDTO struct {

@@ -73,3 +73,19 @@ type Comment struct {
 func (Comment) TableName() string {
 	return "comments"
 }
+
+// TitleHistory is one recorded title change for a video in content.db.
+// It powers the per-video rename history (spec 29, item 38) and the
+// undo data for applied renames.
+type TitleHistory struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	VideoID   uint      `gorm:"index" json:"video_id"`
+	OldTitle  string    `json:"old_title"`
+	NewTitle  string    `json:"new_title"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (TitleHistory) TableName() string {
+	return "title_histories"
+}

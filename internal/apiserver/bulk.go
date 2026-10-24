@@ -28,14 +28,15 @@ type bulkPlanRequest struct {
 
 // changeDTO is one planned change in a bulk-plan response.
 type changeDTO struct {
-	VideoID              uint   `json:"videoId"`
-	YTVideoID            string `json:"ytVideoId"`
-	ChannelID            uint   `json:"channelId"`
-	OldTitle             string `json:"oldTitle"`
-	NewTitle             string `json:"newTitle"`
-	OldDescription       string `json:"oldDescription"`
-	NewDescription       string `json:"newDescription"`
-	HasDescriptionChange bool   `json:"hasDescriptionChange"`
+	VideoID              uint     `json:"videoId"`
+	YTVideoID            string   `json:"ytVideoId"`
+	ChannelID            uint     `json:"channelId"`
+	OldTitle             string   `json:"oldTitle"`
+	NewTitle             string   `json:"newTitle"`
+	OldDescription       string   `json:"oldDescription"`
+	NewDescription       string   `json:"newDescription"`
+	HasDescriptionChange bool     `json:"hasDescriptionChange"`
+	Warnings             []string `json:"warnings"`
 }
 
 // bulkPlanResponse is the data shape of POST /api/videos/bulk-plan.
@@ -86,13 +87,27 @@ func (s *Server) handleBulkPlan(w http.ResponseWriter, r *http.Request) {
 	s.cleanupPlansLocked()
 	s.plans[planID] = storedPlan{plan: plan, confirmToken: confirmToken, expiresAt: time.Now().Add(10 * time.Minute)}
 	s.mu.Unlock()
+	titleCounts := make(map[string]int)
+	for _, change := range plan.Changes {
+		titleCounts[change.NewTitle]++
+	}
 	changes := make([]changeDTO, 0, len(plan.Changes))
 	for _, change := range plan.Changes {
+		warnings := []string{}
+		if titleCounts[change.NewTitle] > 1 {
+			warnings = append(warnings, "Another video in this plan gets the same new title")
+		}
+		if len([]rune(change.NewTitle)) > 90 {
+			warnings = append(warnings, "New title is close to YouTube's 100-character limit")
+		}
+		if change.NewTitle == change.OldTitle && !change.HasDescriptionChange {
+			warnings = append(warnings, "Title and description are unchanged")
+		}
 		changes = append(changes, changeDTO{
 			VideoID: change.VideoID, YTVideoID: change.YTVideoID, ChannelID: change.ChannelID,
 			OldTitle: change.OldTitle, NewTitle: change.NewTitle,
 			OldDescription: change.OldDescription, NewDescription: change.NewDescription,
-			HasDescriptionChange: change.HasDescriptionChange,
+			HasDescriptionChange: change.HasDescriptionChange, Warnings: warnings,
 		})
 	}
 	warnings := plan.Warnings
@@ -116,20 +131,37 @@ func (s *Server) cleanupPlansLocked() {
 }
 
 // bulkEditRequest is the body of POST /api/videos/bulk-edit.
+// OnlyIDs optionally restricts the apply to a subset of the plan's
+// changes (staged apply, spec 29 item 35); the rest of the plan is
+// kept server-side for a follow-up call.
 type bulkEditRequest struct {
 	PlanID       string `json:"planId"`
 	ConfirmToken string `json:"confirmToken"`
+	OnlyIDs      []uint `json:"onlyIds"`
+}
+
+// bulkResultDTO is the per-item outcome of a bulk apply.
+type bulkResultDTO struct {
+	VideoID   uint   `json:"videoId"`
+	YTVideoID string `json:"ytVideoId"`
+	IsOK      bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
 }
 
 // bulkEditResponse is the data shape of POST /api/videos/bulk-edit.
 type bulkEditResponse struct {
-	Applied int `json:"applied"`
-	Total   int `json:"total"`
+	Applied   int             `json:"applied"`
+	Total     int             `json:"total"`
+	Results   []bulkResultDTO `json:"results"`
+	Remaining int             `json:"remaining"`
+	PlanKept  bool            `json:"planKept"`
 }
 
-// handleBulkEdit serves POST /api/videos/bulk-edit (spec 02 §5's
-// bulk-edit endpoint): it consumes a stored plan exactly once and
-// applies its changes grouped by owning account.
+// handleBulkEdit serves POST /api/videos/bulk-edit: it applies a
+// stored plan's changes (or the OnlyIDs subset) grouped by owning
+// account, reports per-item results, and keeps whatever did not
+// apply - unattempted or failed changes - in the stored plan so
+// the UI can retry them (spec 29, items 35-37).
 func (s *Server) handleBulkEdit(w http.ResponseWriter, r *http.Request) {
 	var body bulkEditRequest
 	if err := decodeJSON(r, &body); err != nil {
@@ -139,9 +171,6 @@ func (s *Server) handleBulkEdit(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.cleanupPlansLocked()
 	stored, hasPlan := s.plans[body.PlanID]
-	if hasPlan && stored.confirmToken == body.ConfirmToken {
-		delete(s.plans, body.PlanID)
-	}
 	s.mu.Unlock()
 	if !hasPlan {
 		writeError(w, http.StatusNotFound, fmt.Errorf("plan not found or expired: %s", body.PlanID))
@@ -151,27 +180,78 @@ func (s *Server) handleBulkEdit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, fmt.Errorf("confirmation token does not match plan %s", body.PlanID))
 		return
 	}
-	applied, err := s.applyPlanGrouped(r, stored.plan)
+	selected, remaining := splitPlanChanges(stored.plan, body.OnlyIDs)
+	results, err := s.applyChangesGrouped(r, selected)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeOK(w, bulkEditResponse{Applied: applied, Total: len(stored.plan.Changes)})
+	applied := 0
+	failedIDs := make(map[uint]bool)
+	for _, result := range results {
+		if result.IsOK {
+			applied++
+		} else {
+			failedIDs[result.VideoID] = true
+		}
+	}
+	for _, change := range selected {
+		if failedIDs[change.VideoID] {
+			remaining = append(remaining, change)
+		}
+	}
+	s.mu.Lock()
+	if len(remaining) > 0 {
+		s.plans[body.PlanID] = storedPlan{
+			plan: &batch.Plan{Changes: remaining}, confirmToken: stored.confirmToken,
+			expiresAt: time.Now().Add(10 * time.Minute),
+		}
+	} else {
+		delete(s.plans, body.PlanID)
+	}
+	s.mu.Unlock()
+	writeOK(w, bulkEditResponse{
+		Applied: applied, Total: len(stored.plan.Changes), Results: results,
+		Remaining: len(remaining), PlanKept: len(remaining) > 0,
+	})
 }
 
-// applyPlanGrouped groups a plan's changes by owning account and
-// applies each group through that account's YouTube service.
-func (s *Server) applyPlanGrouped(r *http.Request, plan *batch.Plan) (int, error) {
+// splitPlanChanges splits a plan into the changes selected by
+// onlyIDs (all of them when onlyIDs is empty) and the rest.
+func splitPlanChanges(plan *batch.Plan, onlyIDs []uint) ([]batch.Change, []batch.Change) {
+	if len(onlyIDs) == 0 {
+		return plan.Changes, []batch.Change{}
+	}
+	wanted := make(map[uint]bool, len(onlyIDs))
+	for _, id := range onlyIDs {
+		wanted[id] = true
+	}
+	selected := []batch.Change{}
+	remaining := []batch.Change{}
+	for _, change := range plan.Changes {
+		if wanted[change.VideoID] {
+			selected = append(selected, change)
+		} else {
+			remaining = append(remaining, change)
+		}
+	}
+	return selected, remaining
+}
+
+// applyChangesGrouped groups changes by owning account and applies
+// each group through that account's YouTube service, collecting
+// per-item results and continuing past individual failures.
+func (s *Server) applyChangesGrouped(r *http.Request, changes []batch.Change) ([]bulkResultDTO, error) {
 	mapping, err := s.channelAccountMap()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	groups := make(map[uint]*batch.Plan)
 	var accountOrder []uint
-	for _, change := range plan.Changes {
+	for _, change := range changes {
 		accountID, hasAccount := mapping[change.ChannelID]
 		if !hasAccount {
-			return 0, fmt.Errorf("no account found for channel %d", change.ChannelID)
+			return nil, fmt.Errorf("no account found for channel %d", change.ChannelID)
 		}
 		group, hasGroup := groups[accountID]
 		if !hasGroup {
@@ -181,17 +261,23 @@ func (s *Server) applyPlanGrouped(r *http.Request, plan *batch.Plan) (int, error
 		}
 		group.Changes = append(group.Changes, change)
 	}
-	applied := 0
+	results := []bulkResultDTO{}
 	for _, accountID := range accountOrder {
 		svc, err := s.serviceForAccountID(r, accountID)
 		if err != nil {
-			return applied, err
+			for _, change := range groups[accountID].Changes {
+				results = append(results, bulkResultDTO{
+					VideoID: change.VideoID, YTVideoID: change.YTVideoID, Error: err.Error(),
+				})
+			}
+			continue
 		}
-		count, err := batch.Apply(r.Context(), svc, s.store, groups[accountID])
-		applied += count
-		if err != nil {
-			return applied, err
+		for _, result := range batch.ApplyEach(r.Context(), svc, s.store, groups[accountID]) {
+			results = append(results, bulkResultDTO{
+				VideoID: result.VideoID, YTVideoID: result.YTVideoID,
+				IsOK: result.IsOK, Error: result.Error,
+			})
 		}
 	}
-	return applied, nil
+	return results, nil
 }

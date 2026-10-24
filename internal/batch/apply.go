@@ -25,6 +25,30 @@ func Apply(ctx context.Context, svc *youtube.Service, store *repo.Store, plan *P
 	return applied, nil
 }
 
+// ApplyResult is the per-change outcome of ApplyEach.
+type ApplyResult struct {
+	VideoID   uint
+	YTVideoID string
+	IsOK      bool
+	Error     string
+}
+
+// ApplyEach applies plan changes one by one and keeps going past
+// failures, returning one result per change. It powers the UI's
+// per-item progress and retry-failures flow (spec 29, items 36-37).
+func ApplyEach(ctx context.Context, svc *youtube.Service, store *repo.Store, plan *Plan) []ApplyResult {
+	results := make([]ApplyResult, 0, len(plan.Changes))
+	for _, change := range plan.Changes {
+		result := ApplyResult{VideoID: change.VideoID, YTVideoID: change.YTVideoID, IsOK: true}
+		if err := applyChange(ctx, svc, store, change); err != nil {
+			result.IsOK = false
+			result.Error = err.Error()
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
 // applyChange applies a single change: fetch the current video,
 // update its snippet on YouTube, then update the mirror row.
 func applyChange(ctx context.Context, svc *youtube.Service, store *repo.Store, change Change) error {
@@ -45,6 +69,11 @@ func applyChange(ctx context.Context, svc *youtube.Service, store *repo.Store, c
 	}
 	if err := store.Videos.UpdateTitleDescription(change.VideoID, change.NewTitle, resultingDescription); err != nil {
 		return err
+	}
+	if change.NewTitle != change.OldTitle && store.TitleHistory != nil {
+		// Rename history is best-effort: a history write failure
+		// must not fail a rename YouTube already accepted.
+		_ = store.TitleHistory.Record(change.VideoID, change.OldTitle, change.NewTitle, "batch")
 	}
 	return nil
 }

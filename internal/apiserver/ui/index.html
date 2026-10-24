@@ -126,7 +126,10 @@
       <!-- VIDEOS -->
       <section id="section-videos" class="panel">
         <div class="toolbar">
-          <input id="video-q" type="search" placeholder="Search titles and descriptions">
+          <div class="search-box">
+            <input id="video-q" type="search" placeholder="Search titles and descriptions" autocomplete="off">
+            <div id="search-dropdown" class="search-dropdown hidden"></div>
+          </div>
           <input id="video-channel" type="number" min="1" placeholder="Channel ID">
           <select id="video-sort" title="Sort results">
             <option value="newest">Newest first</option>
@@ -136,8 +139,10 @@
           </select>
           <button id="video-search-btn" class="primary">Search</button>
           <button id="video-save-search-btn">Save search</button>
+          <button id="search-all-btn" aria-pressed="false">Search everywhere</button>
           <input id="pattern-finder" type="text" placeholder="Pattern finder (regex highlight)">
         </div>
+        <div id="search-all-results" class="search-all hidden"></div>
         <div class="chips" id="visibility-chips">
           <button class="chip is-active" data-vis="">All</button>
           <button class="chip" data-vis="public">Public</button>
@@ -151,20 +156,41 @@
         </div>
         <div class="status-line" id="video-status"></div>
         <div class="bulkbar">
-          <input id="bulk-template" type="text" placeholder="Template, e.g. {title} #{n}">
-          <input id="bulk-regex" type="text" placeholder="Regex">
-          <input id="bulk-replacement" type="text" placeholder="Replacement">
-          <input id="bulk-desc-template" type="text" placeholder="Description template">
-          <input id="bulk-start" type="number" value="1" class="narrow" title="Start index">
-          <button id="bulk-plan-btn">Plan bulk edit</button>
+          <div class="bulk-main">
+            <input id="bulk-template" type="text" placeholder="Template, e.g. {title} #{n}">
+            <input id="bulk-regex" type="text" placeholder="Regex">
+            <input id="bulk-replacement" type="text" placeholder="Replacement">
+            <input id="bulk-desc-template" type="text" placeholder="Description template ({description} {title} {n})" title="Description template ({description} {title} {n})">
+            <input id="bulk-start" type="number" value="1" class="narrow" title="Start index">
+            <button id="bulk-plan-btn">Plan bulk edit</button>
+          </div>
+          <div class="bulk-subrow">
+            <span class="bulk-label">Insert token:</span>
+            <button class="token-chip" data-token="{title}">{title}</button>
+            <button class="token-chip" data-token="{n}">{n}</button>
+            <button class="token-chip" data-token="{description}">{description}</button>
+            <span id="bulk-match-count" class="match-count"></span>
+          </div>
+          <div class="bulk-subrow">
+            <span class="bulk-label">Recipe:</span>
+            <select id="recipe-select"><option value="">No recipe selected</option></select>
+            <button id="recipe-save-btn">Save recipe</button>
+            <button id="recipe-delete-btn">Delete recipe</button>
+          </div>
+          <div id="bulk-preview" class="bulk-preview"></div>
         </div>
         <div id="bulk-plan" class="plan-box hidden">
           <pre id="bulk-summary"></pre>
           <table class="grid">
-            <thead><tr><th>YT ID</th><th>Old title</th><th>New title</th><th>Description</th></tr></thead>
+            <thead><tr><th>Include</th><th>YT ID</th><th>Old title</th><th>New title</th><th>Description</th><th>Warnings</th><th>Result</th></tr></thead>
             <tbody id="bulk-changes"></tbody>
           </table>
-          <button id="bulk-apply-btn" class="primary">Apply plan</button>
+          <div class="row plan-actions">
+            <button id="bulk-apply-first-btn">Apply first 5</button>
+            <button id="bulk-apply-btn" class="primary">Apply included (0)</button>
+            <button id="bulk-apply-all-btn">Apply all changes (0)</button>
+            <button id="bulk-retry-btn" class="hidden">Retry failed only</button>
+          </div>
         </div>
         <div id="video-empty" class="empty-state hidden"></div>
         <div class="table-wrap">
@@ -185,14 +211,29 @@
         <div class="toolbar">
           <input id="episode-channel" type="number" min="1" placeholder="Channel ID">
           <button id="episode-load-btn" class="primary">Load episodes</button>
+          <button id="episode-merge-btn" disabled>Merge selected (0)</button>
         </div>
         <div class="status-line" id="episode-status"></div>
         <div id="episode-list"></div>
         <form id="schedule-form" class="card hidden">
           <h2>Schedule episode <span id="schedule-episode-id"></span></h2>
+          <label>Cadence
+            <select id="schedule-cadence-choice">
+              <option value="1">Daily (1 day)</option>
+              <option value="7" selected>Weekly (7 days)</option>
+              <option value="14">Every 2 weeks (14 days)</option>
+              <option value="21">Every 3 weeks (21 days)</option>
+              <option value="custom">Custom days</option>
+            </select>
+          </label>
           <label>Cadence days <input id="schedule-cadence" type="number" min="1" value="7"></label>
           <label>Starts at <input id="schedule-starts" type="datetime-local"></label>
           <label class="check"><input id="schedule-public" type="checkbox"> Include public videos</label>
+          <div id="schedule-plan-preview" class="schedule-preview hidden">
+            <div class="preview-label">Preview — not applied yet</div>
+            <div id="schedule-plan-warnings"></div>
+            <div id="schedule-plan-entries"></div>
+          </div>
           <button type="submit" class="primary">Apply schedule</button>
           <div class="status-line" id="schedule-status"></div>
           <ul id="schedule-result"></ul>
@@ -203,8 +244,13 @@
       <section id="section-schedules" class="panel">
         <div class="toolbar">
           <button id="schedules-load-btn" class="primary">Refresh schedule rules</button>
+          <button id="calendar-prev-btn">← Prev month</button>
+          <strong id="calendar-title"></strong>
+          <button id="calendar-next-btn">Next month →</button>
         </div>
         <div class="status-line" id="schedules-status"></div>
+        <div id="schedule-plan-health"></div>
+        <div id="schedule-calendar" class="calendar"></div>
         <div id="schedules-empty"></div>
         <div class="table-wrap">
           <table class="grid">
@@ -334,6 +380,8 @@
     </div>
     <div class="status-line" id="edit-status"></div>
   </form>
+  <h3>Rename history</h3>
+  <div id="drawer-history" class="history-list"><p class="muted-text">No recorded renames yet</p></div>
 </aside>
 
 <script src="/app.js"></script>

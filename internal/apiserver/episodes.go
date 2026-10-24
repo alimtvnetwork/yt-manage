@@ -37,17 +37,22 @@ func (s *Server) handleListEpisodes(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, dtos)
 }
 
-// episodeWithParts builds an episode DTO including its parts.
+// episodeWithParts builds an episode DTO including its parts, the
+// missing part numbers (gap slots for the board, spec 29 item 41),
+// and health warnings (item 49).
 func (s *Server) episodeWithParts(episode model.Episode) (episodeDTO, error) {
 	dto := episodeDTO{
 		ID: episode.ID, ChannelID: episode.ChannelID, EpisodeKey: episode.EpisodeKey,
 		EpisodeNumber: episode.EpisodeNumber, Title: episode.Title, CadenceDays: episode.CadenceDays,
 		FirstPublishAt: formatTimePtr(episode.FirstPublishAt), Parts: []episodePartDTO{},
+		GapParts: []int{}, Warnings: []string{},
 	}
 	parts, err := s.store.Episodes.ListParts(episode.ID)
 	if err != nil {
 		return episodeDTO{}, err
 	}
+	seenParts := make(map[int]int)
+	maxPart := 0
 	for _, part := range parts {
 		partDTO := episodePartDTO{Sequence: part.Sequence, PartNumber: part.PartNumber, VideoID: part.VideoID}
 		video, err := s.store.Videos.GetByID(part.VideoID)
@@ -56,7 +61,23 @@ func (s *Server) episodeWithParts(episode model.Episode) (episodeDTO, error) {
 		}
 		partDTO.YTVideoID = video.YTVideoID
 		partDTO.Title = video.Title
+		partDTO.Visibility = video.Visibility.String()
+		partDTO.PublishAt = formatTimePtr(video.PublishAt)
+		partDTO.PublishedAt = formatTimePtr(video.PublishedAt)
 		dto.Parts = append(dto.Parts, partDTO)
+		seenParts[part.PartNumber]++
+		if part.PartNumber > maxPart {
+			maxPart = part.PartNumber
+		}
+	}
+	for number := 1; number <= maxPart; number++ {
+		if seenParts[number] == 0 {
+			dto.GapParts = append(dto.GapParts, number)
+			dto.Warnings = append(dto.Warnings, fmt.Sprintf("Missing part %d", number))
+		}
+		if seenParts[number] > 1 {
+			dto.Warnings = append(dto.Warnings, fmt.Sprintf("Part %d appears %d times", number, seenParts[number]))
+		}
 	}
 	return dto, nil
 }
