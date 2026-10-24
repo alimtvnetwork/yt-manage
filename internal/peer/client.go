@@ -44,13 +44,29 @@ func PushTo(ctx context.Context, store *repo.Store, peerID uint) (Result, error)
 
 // PushTo is PushTo on this client.
 func (c *Client) PushTo(ctx context.Context, store *repo.Store, peerID uint) (Result, error) {
-	peerRow, err := store.Peers.GetByID(peerID)
-	if err != nil {
-		return Result{}, fmt.Errorf("load peer %d: %w", peerID, err)
-	}
 	payload, err := BuildPayload(store)
 	if err != nil {
 		return Result{}, err
+	}
+	return c.PushPayload(ctx, store, peerID, payload)
+}
+
+// PushSelected pushes only the given channels' data (by YouTube
+// channel id) to the peer: selective sharing, spec 29 item 172.
+func (c *Client) PushSelected(ctx context.Context, store *repo.Store, peerID uint, keep map[string]bool) (Result, error) {
+	payload, err := BuildPayloadFor(store, keep)
+	if err != nil {
+		return Result{}, err
+	}
+	return c.PushPayload(ctx, store, peerID, payload)
+}
+
+// PushPayload sends one already-built payload to the peer's
+// /api/peer/push endpoint and returns its apply Result.
+func (c *Client) PushPayload(ctx context.Context, store *repo.Store, peerID uint, payload *Payload) (Result, error) {
+	peerRow, err := store.Peers.GetByID(peerID)
+	if err != nil {
+		return Result{}, fmt.Errorf("load peer %d: %w", peerID, err)
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -102,6 +118,30 @@ func (c *Client) PullFrom(ctx context.Context, store *repo.Store, peerID uint) (
 		return Result{}, err
 	}
 	return result, nil
+}
+
+// FetchPayload asks the peer for its payload without applying
+// anything locally: the read-only half of conflict detection
+// (spec 29 item 173).
+func (c *Client) FetchPayload(ctx context.Context, store *repo.Store, peerID uint) (*Payload, error) {
+	peerRow, err := store.Peers.GetByID(peerID)
+	if err != nil {
+		return nil, fmt.Errorf("load peer %d: %w", peerID, err)
+	}
+	data, err := c.post(ctx, peerRow, "/api/peer/pull", []byte("{}"))
+	if err != nil {
+		return nil, err
+	}
+	payload := &Payload{Videos: []VideoDTO{}, Playlists: []PlaylistDTO{}}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, payload); err != nil {
+			return nil, fmt.Errorf("decode payload from peer %s: %w", peerRow.Name, err)
+		}
+	}
+	if err := touchPeer(store, peerRow); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }
 
 // post sends one signed request to the peer and returns the data

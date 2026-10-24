@@ -45,7 +45,7 @@ preview/undo/settings).
 - [x] Wave 6 (Subtask 06) — Items 126–150: comment coverage, playlist
       board + gap/duplicate finders, tags manager, channel dashboard,
       series scorecards, A/B results view, publish heatmap.
-- [ ] Wave 7 (Subtask 07) — Items 151–175: all-accounts overview,
+- [x] Wave 7 (Subtask 07) — Items 151–175: all-accounts overview,
       cross-account search, account health centre, publish digests and
       alerts, notification matrix, peer status screen, export bundle.
 - [ ] Wave 8 (Subtask 08) — Items 176–200: import preview, backups,

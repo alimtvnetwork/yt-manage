@@ -89,6 +89,7 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			response.Results = append(response.Results, syncResultDTO{AccountID: accountID, Error: err.Error()})
 			response.Errors = append(response.Errors, err.Error())
+			s.alertFailure(fmt.Sprintf("Sync of account %d failed: %v", accountID, err))
 			continue
 		}
 		response.Results = append(response.Results, syncResultDTO{

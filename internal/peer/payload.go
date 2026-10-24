@@ -88,6 +88,14 @@ func parseTime(s string) (*time.Time, error) {
 // wire payload. Playlist items are resolved to YouTube video ids;
 // an item whose video is no longer in the mirror is skipped.
 func BuildPayload(store *repo.Store) (*Payload, error) {
+	return BuildPayloadFor(store, nil)
+}
+
+// BuildPayloadFor is BuildPayload restricted to the channels
+// whose YouTube ids are in keep (nil keeps every channel). It
+// backs selective peer sharing (spec 29 item 172): a peer only
+// ever receives the channels the user chose to share with it.
+func BuildPayloadFor(store *repo.Store, keep map[string]bool) (*Payload, error) {
 	channels, err := store.Channels.List()
 	if err != nil {
 		return nil, fmt.Errorf("list channels: %w", err)
@@ -97,6 +105,9 @@ func BuildPayload(store *repo.Store) (*Payload, error) {
 		Playlists: []PlaylistDTO{},
 	}
 	for _, channel := range channels {
+		if keep != nil && !keep[channel.YTChannelID] {
+			continue
+		}
 		videos, err := store.Videos.ListByChannel(channel.ID)
 		if err != nil {
 			return nil, fmt.Errorf("list videos for channel %d: %w", channel.ID, err)

@@ -34,6 +34,8 @@
       <button class="nav-item" data-section="comments"><span class="nav-icon">✎</span><span class="nav-label">Comments</span><span class="badge" id="badge-comments"></span></button>
       <button class="nav-item" data-section="abtests"><span class="nav-icon">A/B</span><span class="nav-label">A/B Tests</span></button>
       <button class="nav-item" data-section="accounts"><span class="nav-icon">◉</span><span class="nav-label">Accounts</span><span class="badge" id="badge-accounts"></span></button>
+      <button class="nav-item" data-section="inbox"><span class="nav-icon">✉</span><span class="nav-label">Inbox</span></button>
+      <button class="nav-item" data-section="peers"><span class="nav-icon">⇄</span><span class="nav-label">Peers</span></button>
       <button class="nav-item" data-section="history"><span class="nav-icon">↩</span><span class="nav-label">History</span></button>
       <button class="nav-item" data-section="settings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
     </nav>
@@ -57,6 +59,9 @@
           <span id="quota-label">Quota today: –</span>
           <div class="quota-bar"><div id="quota-fill" class="quota-fill"></div></div>
         </div>
+        <label class="scope-picker">Account
+          <select id="scope-account"><option value="">All accounts</option></select>
+        </label>
         <label class="scope-picker">Channel
           <select id="scope-channel"><option value="">All channels</option></select>
         </label>
@@ -74,6 +79,8 @@
     <main>
       <!-- HOME -->
       <section id="section-home" class="panel">
+        <div id="account-focus-strip" class="account-strip hidden"></div>
+        <div id="missed-banner"></div>
         <div id="home-stats" class="stat-grid"></div>
 
         <div class="card hidden" id="wizard-card">
@@ -293,6 +300,7 @@
           <p class="muted-text">Whole series detected from title patterns. Rename a series to one clean naming scheme — the wizard builds a normal bulk-edit plan narrowed to just that series, so you review every change before it applies.</p>
           <div id="series-list"><p class="muted-text">Loading…</p></div>
           <div id="series-wizard" class="wizard-panel hidden"></div>
+          <div id="series-move-panel" class="wizard-panel hidden"></div>
         </div>
         <div id="episode-list"></div>
         <form id="schedule-form" class="card hidden">
@@ -445,6 +453,31 @@
           <button id="calendar-next-btn">Next month →</button>
         </div>
         <div class="status-line" id="schedules-status"></div>
+        <div class="card" id="missed-card">
+          <h2>Missed publishes</h2>
+          <p class="muted-text">Scheduled videos whose publish time passed without the video going public. Rescheduling opens the episode's schedule form in Episodes — the plan is rebuilt from the new start date, so review it before applying.</p>
+          <div id="missed-list"><p class="muted-text">Loading…</p></div>
+        </div>
+        <div class="card" id="timeline-card">
+          <div class="card-head">
+            <h2>Publish timeline</h2>
+            <span class="row">
+              <label class="scope-picker">Channel
+                <select id="timeline-channel"><option value="">Choose a channel…</option></select>
+              </label>
+              <label class="scope-picker">Window
+                <select id="timeline-days">
+                  <option value="7">7 days</option>
+                  <option value="30" selected>30 days</option>
+                  <option value="90">90 days</option>
+                </select>
+              </label>
+              <button id="timeline-load-btn" class="primary">Load timeline</button>
+            </span>
+          </div>
+          <div class="status-line" id="timeline-status"></div>
+          <div id="timeline-list"><p class="muted-text">Pick a channel to see its past and future publishes on one timeline.</p></div>
+        </div>
         <div id="schedule-plan-health"></div>
         <div id="schedule-calendar" class="calendar"></div>
         <div id="schedules-empty"></div>
@@ -572,6 +605,24 @@
           <div id="insights-growth"><p class="muted-text">Pick an account to see its snapshots.</p></div>
         </div>
 
+        <div class="card" id="insights-compare-card">
+          <div class="card-head">
+            <h2>Compare channels</h2>
+            <span class="row">
+              <label class="scope-picker">Channel A
+                <select id="compare-a"><option value="">Choose a channel…</option></select>
+              </label>
+              <label class="scope-picker">Channel B
+                <select id="compare-b"><option value="">Choose a channel…</option></select>
+              </label>
+              <button id="compare-btn" class="primary">Compare</button>
+            </span>
+          </div>
+          <p class="muted-text">Side-by-side stats for any two channels, from the local mirror.</p>
+          <div class="status-line" id="compare-status"></div>
+          <div id="compare-result"><p class="muted-text">Pick two channels and compare them.</p></div>
+        </div>
+
         <div class="card" id="insights-goals-card">
           <h2>Goals</h2>
           <div id="goals-list"><p class="muted-text">Loading…</p></div>
@@ -633,6 +684,16 @@
           <span id="sync-progress" class="status-line"></span>
         </div>
         <div class="status-line" id="account-status"></div>
+        <div class="card" id="overview-card">
+          <div class="card-head">
+            <h2>All accounts</h2>
+            <button id="overview-sync-btn" data-write>Sync all accounts</button>
+          </div>
+          <p class="muted-text" id="overview-quota"></p>
+          <div class="status-line" id="overview-status"></div>
+          <div id="overview-list"><p class="muted-text">Loading…</p></div>
+          <div id="overview-sync-summary"></div>
+        </div>
         <div id="accounts-empty"></div>
         <div class="table-wrap">
           <table class="grid">
@@ -642,6 +703,7 @@
         </div>
         <div id="sync-result" class="plan-box hidden"></div>
         <div id="accounts-health"></div>
+        <div id="health-centre"></div>
         <div class="warn-box">
           <strong>About token expiry:</strong> if your Google Cloud OAuth consent screen is still in
           <strong>Testing mode</strong>, Google expires refresh tokens after about <strong>7 days</strong> and
@@ -649,6 +711,32 @@
           <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener">Google Cloud Console → OAuth consent screen → Publish app</a>.
           Reconnect an account any time from a terminal with <code>yt-manage account add</code> — sign-in happens there, not in this page.
         </div>
+      </section>
+
+      <!-- INBOX -->
+      <section id="section-inbox" class="panel">
+        <div class="toolbar">
+          <button id="mail-refresh-btn" class="primary">Refresh inbox</button>
+          <input id="mail-filter" type="search" placeholder="Filter by sender or subject…" autocomplete="off" aria-label="Filter inbox">
+        </div>
+        <p class="muted-text">Mail from the connected mail account, read over IMAP — the same inbox the publish emails land in. Reading only: replies still happen in your mail app.</p>
+        <div class="status-line" id="mail-status"></div>
+        <div id="mail-list"><p class="muted-text">Loading…</p></div>
+      </section>
+
+      <!-- PEERS -->
+      <section id="section-peers" class="panel">
+        <p class="muted-text">Peers are other yt-manage installations you mirror with. Sync is explicit: nothing is sent or received until you push or pull, and a peer only ever receives the channels you choose to share with it below.</p>
+        <div class="status-line" id="peers-status"></div>
+        <div id="peers-list"><p class="muted-text">Loading…</p></div>
+        <form id="peer-form" class="card">
+          <h2>Add a peer</h2>
+          <label>Name <input id="peer-name" type="text" placeholder="e.g. Studio PC" autocomplete="off"></label>
+          <label>Base URL <input id="peer-url" type="url" placeholder="http://192.168.1.20:8765" autocomplete="off"></label>
+          <label>Shared secret <input id="peer-secret" type="password" placeholder="The secret both machines agreed on" autocomplete="new-password"></label>
+          <button type="submit" class="primary" data-write>Add peer</button>
+          <div class="status-line" id="peer-form-status"></div>
+        </form>
       </section>
 
       <!-- HISTORY -->
@@ -723,6 +811,73 @@
             </div>
             <div class="status-line" id="cd-status"></div>
           </div>
+        </div>
+        <div class="card" id="notify-card">
+          <h2>Notifications</h2>
+          <p class="muted-text">Email notifications per event. Digests and the weekly report go out once a day at the digest time; failure alerts and going-live reminders are sent as they happen. Channels left unticked are excluded from the digest and the weekly report. Every automated email carries a line explaining how to stop it.</p>
+          <table class="grid notify-table">
+            <thead><tr><th>Event</th><th>Mode</th><th>Test</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Publish-day digest</td>
+                <td><select id="notify-digest">
+                  <option value="digest">Digest (daily)</option>
+                  <option value="off">Off</option>
+                </select></td>
+                <td><button data-notify-test="digest">Test send</button></td>
+              </tr>
+              <tr>
+                <td>Failure alerts</td>
+                <td><select id="notify-failures">
+                  <option value="instant">Instant</option>
+                  <option value="off">Off</option>
+                </select></td>
+                <td><button data-notify-test="failure">Test send</button></td>
+              </tr>
+              <tr>
+                <td>“Going live in 1 hour” reminders</td>
+                <td><select id="notify-goinglive">
+                  <option value="instant">Instant</option>
+                  <option value="off">Off</option>
+                </select></td>
+                <td><button data-notify-test="going-live">Test send</button></td>
+              </tr>
+              <tr>
+                <td>Weekly channel report</td>
+                <td><select id="notify-weekly">
+                  <option value="digest">Digest (weekly)</option>
+                  <option value="off">Off</option>
+                </select></td>
+                <td><button data-notify-test="weekly">Test send</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <label>Digest time <input id="notify-time" type="time" value="08:00"></label>
+          <fieldset class="rule-group">
+            <legend>Channels included in digest &amp; weekly report</legend>
+            <div id="notify-channels"><p class="muted-text">Loading channels…</p></div>
+          </fieldset>
+          <div class="row">
+            <button id="notify-save-btn" class="primary" data-write>Save notification preferences</button>
+            <button id="notify-send-digest" data-write>Send digest now</button>
+            <button id="notify-send-weekly" data-write>Send weekly report now</button>
+          </div>
+          <div class="status-line" id="notify-status"></div>
+        </div>
+        <div class="card" id="bundle-card">
+          <h2>Export &amp; import bundle</h2>
+          <p>One file with everything needed to move machines or keep a backup: the mirrored channels, videos and playlists, your non-secret settings, and your rules, rename recipes, saved searches, channel defaults, favourites and notification preferences. <strong>Secrets are never included</strong> — no tokens, passwords or webhook secrets ever leave this machine in a bundle.</p>
+          <div class="row">
+            <a class="btn-link" href="/api/export/bundle" download>Download export bundle</a>
+          </div>
+          <h3>Import a bundle</h3>
+          <p class="muted-text">Importing first shows a preview of what would be added, updated and skipped — nothing is written until you choose “Apply import”.</p>
+          <input id="bundle-import-file" type="file" accept=".json,application/json">
+          <div id="bundle-import-preview"></div>
+          <div class="row">
+            <button id="bundle-apply-btn" class="primary hidden" data-write>Apply import</button>
+          </div>
+          <div class="status-line" id="bundle-status"></div>
         </div>
         <div class="card" id="settings-per-account-card">
           <h2>Per-account overrides</h2>

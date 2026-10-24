@@ -61,15 +61,39 @@ func (s *Server) handlePeerPush(w http.ResponseWriter, r *http.Request) {
 // handlePeerPull serves POST /api/peer/pull: a signed request (the
 // body may be "{}" or empty) receives the local mirror payload.
 // The signature is verified against whatever bytes arrived.
+//
+// Selective sharing (spec 29 item 172): once a sharing selection
+// has been saved for the requesting peer, the payload is
+// limited to those channels. A peer with no saved selection
+// keeps the pre-Wave-7 behaviour (the full mirror), so existing
+// CLI peer setups are not silently cut off.
 func (s *Server) handlePeerPull(w http.ResponseWriter, r *http.Request) {
 	_, isAuthenticated := s.authenticatePeer(w, r)
 	if !isAuthenticated {
 		return
 	}
-	payload, err := peer.BuildPayload(s.store)
+	payload, err := s.peerPullPayload(r.Header.Get("X-YTM-Peer"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeOK(w, payload)
+}
+
+// peerPullPayload builds the payload for one named peer,
+// honouring its saved sharing selection when one exists.
+func (s *Server) peerPullPayload(peerName string) (*peer.Payload, error) {
+	peerRow, err := s.store.Peers.GetByName(peerName)
+	if err != nil {
+		return peer.BuildPayload(s.store)
+	}
+	key := fmt.Sprintf("peer:%d:channels", peerRow.ID)
+	if _, found, getErr := s.store.Settings.Get(key); getErr != nil || !found {
+		return peer.BuildPayload(s.store)
+	}
+	keep, err := s.peerKeepSet(peerRow.ID)
+	if err != nil {
+		return nil, err
+	}
+	return peer.BuildPayloadFor(s.store, keep)
 }

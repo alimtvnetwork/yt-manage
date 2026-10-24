@@ -60,6 +60,7 @@ func (s *Server) autoTick(ctx context.Context) {
 	s.runDueAutoSyncs(ctx, cfg)
 	s.runPipelines(ctx, cfg)
 	s.runABTestSchedules(ctx)
+	s.runNotifyTick(cfg)
 }
 
 // bumpHeld adds to the quiet-hours held counter.
@@ -121,6 +122,7 @@ func (s *Server) runDueAutoSyncs(ctx context.Context, cfg *config.Settings) {
 		result, syncErr := syncer.RunAccount(ctx, s.home, s.store, s.key, account.ID, false, cfg.DailyQuotaBudget)
 		if syncErr != nil {
 			s.recordActivity("sync", fmt.Sprintf("Auto-sync of account %d failed: %v", account.ID, syncErr), "")
+			s.alertFailure(fmt.Sprintf("Auto-sync of account %s failed: %v", account.Label, syncErr))
 			continue
 		}
 		ranAny = true

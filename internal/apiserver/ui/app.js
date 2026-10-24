@@ -60,6 +60,15 @@ const state = {
   longForm: false,
   insightsBy: "views",
   orphanPlaylists: [],
+  // Wave 7 (items 151-175)
+  overview: null,
+  favourites: new Set(),
+  profiles: {},
+  missed: [],
+  mailInbox: [],
+  peers: [],
+  importBundle: null,
+  moveSeries: null,
 };
 
 const SECTIONS = {
@@ -75,6 +84,8 @@ const SECTIONS = {
   comments: "Comments",
   abtests: "A/B Tests",
   accounts: "Accounts",
+  inbox: "Inbox",
+  peers: "Peers",
   history: "History",
   settings: "Settings",
 };
@@ -630,7 +641,11 @@ el("side-nav").addEventListener("click", (event) => {
 });
 
 function onEnterSection(section) {
-  if (section === "home") loadHomeSuggestions();
+  if (section === "home") {
+    loadHomeSuggestions();
+    renderAccountFocusStrip();
+    loadMissedBanner();
+  }
   if (section === "suggestions") loadInbox();
   if (section === "videos" && !state.videosLoaded) loadVideos();
   if (section === "episodes") {
@@ -641,11 +656,20 @@ function onEnterSection(section) {
   if (section === "commentcentre") loadCommentCentre();
   if (section === "playlists" && el("playlist-channel").value) loadPlaylists();
   if (section === "insights") loadInsights();
-  if (section === "schedules") loadSchedules();
+  if (section === "schedules") {
+    loadSchedules();
+    loadTimeline();
+    loadMissedPanel();
+  }
   if (section === "comments") loadComments();
   if (section === "accounts") loadAccounts();
+  if (section === "inbox") loadMailInbox();
+  if (section === "peers") loadPeers();
   if (section === "history") loadHistory();
-  if (section === "settings") loadSettings();
+  if (section === "settings") {
+    loadSettings();
+    loadNotifyPrefs();
+  }
 }
 
 window.addEventListener("hashchange", () => {
@@ -726,10 +750,10 @@ function renderStatus(status) {
   setBadge("badge-comments", status.commentCount);
   setBadge("badge-accounts", status.accountCount);
 
-  const options = (status.channels || []).map((channel) =>
-    "<option value=\"" + channel.id + "\">" + escapeHTML(channel.title) + "</option>").join("");
+  const options = channelOptionsHTML(status.channels || []);
   el("scope-channel").innerHTML = "<option value=\"\">All channels</option>" + options;
   el("wizard-channel").innerHTML = "<option value=\"\">All channels</option>" + options;
+  renderAccountSwitcher();
   const savedScope = LS.get("scopeChannel", "");
   if (savedScope && (status.channels || []).some((c) => String(c.id) === String(savedScope))) {
     applyScope(savedScope, false);
@@ -1535,6 +1559,9 @@ async function runSearchAll() {
   try {
     const data = await api("GET", "/api/search/all?q=" + encodeURIComponent(query));
     state.searchAll = data;
+    // Cross-account labels (item 152): nicknames live in the
+    // overview payload, fetched once and cached.
+    await ensureOverview();
     renderSearchAll(query, data);
   } catch (err) {
     box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(friendlyError(err)) + "</p>";
@@ -1545,18 +1572,24 @@ function renderSearchAll(query, data) {
   const box = el("search-all-results");
   const group = (title, items) => items.length === 0 ? "" :
     "<h3>" + title + " (" + items.length + ")</h3><div class=\"search-all-group\">" + items.join("") + "</div>";
+  const scopeTag = (channelId) => {
+    const label = channelScopeLabel(channelId);
+    return label ? " · <span class=\"scope-tag\">" + escapeHTML(label) + "</span>" : "";
+  };
   const videos = (data.videos || []).map((video) =>
     "<button class=\"search-all-item\" data-all-video=\"" + video.id + "\"><strong>" + escapeHTML(video.title) +
-    "</strong><span>" + escapeHTML(video.visibility || "") + " · " + (video.viewCount || 0) + " views</span></button>");
+    "</strong><span>" + escapeHTML(video.visibility || "") + " · " + (video.viewCount || 0) + " views" + scopeTag(video.channelId) + "</span></button>");
   const playlists = (data.playlists || []).map((playlist) =>
     "<button class=\"search-all-item\" data-all-playlist=\"" + playlist.id + "\" data-channel=\"" + playlist.channelId + "\"><strong>" +
-    escapeHTML(playlist.title) + "</strong><span>" + (playlist.itemCount || 0) + " items</span></button>");
+    escapeHTML(playlist.title) + "</strong><span>" + (playlist.itemCount || 0) + " items" + scopeTag(playlist.channelId) + "</span></button>");
   const episodes = (data.episodes || []).map((episode) =>
     "<button class=\"search-all-item\" data-all-episode=\"" + episode.id + "\" data-channel=\"" + episode.channelId + "\"><strong>" +
-    escapeHTML(episode.title || episode.episodeKey) + "</strong><span>Episode " + episode.episodeNumber + " · " + (episode.parts || []).length + " parts</span></button>");
+    escapeHTML(episode.title || episode.episodeKey) + "</strong><span>Episode " + episode.episodeNumber + " · " + (episode.parts || []).length + " parts" + scopeTag(episode.channelId) + "</span></button>");
+  const commentChannel = new Map((data.videos || []).map((video) => [String(video.id), video.channelId]));
   const comments = (data.comments || []).map((comment) =>
     "<button class=\"search-all-item\" data-all-comment=\"" + comment.videoId + "\"><strong>" +
-    escapeHTML(comment.videoTitle || ("Video " + comment.videoId)) + "</strong><span>" + escapeHTML(String(comment.text || "").slice(0, 90)) + "</span></button>");
+    escapeHTML(comment.videoTitle || ("Video " + comment.videoId)) + "</strong><span>" + escapeHTML(String(comment.text || "").slice(0, 90)) +
+    (commentChannel.has(String(comment.videoId)) ? scopeTag(commentChannel.get(String(comment.videoId))) : "") + "</span></button>");
   const total = videos.length + playlists.length + episodes.length + comments.length;
   box.innerHTML = "<div class=\"card-head\"><h3>Everything matching “" + escapeHTML(query) + "”</h3>" +
     "<button id=\"search-all-close\">Close</button></div>" +
@@ -3324,8 +3357,7 @@ async function fetchChannelDefaults(channelId, force) {
 
 function fillChannelSelects() {
   const channels = (state.status && state.status.channels) || [];
-  const options = channels.map((channel) =>
-    "<option value=\"" + channel.id + "\">" + escapeHTML(channel.title) + "</option>").join("");
+  const options = channelOptionsHTML(channels);
   const cd = el("cd-channel");
   if (cd) {
     const current = cd.value;
@@ -3345,6 +3377,10 @@ function fillChannelSelects() {
     ["tags-channel", "Choose a channel…"],
     ["insights-channel", "Choose a channel…"],
     ["goal-channel", "Choose a channel…"],
+    // Wave 7 selects (items 153, 165).
+    ["compare-a", "Choose a channel…"],
+    ["compare-b", "Choose a channel…"],
+    ["timeline-channel", "Choose a channel…"],
   ];
   plain.forEach(([id, placeholder]) => {
     const select = el(id);
@@ -3621,12 +3657,15 @@ function renderSeries() {
     (series.sample && series.sample.length
       ? "<div class=\"muted-text\">e.g. " + series.sample.map((title) => escapeHTML(title)).join(" · ") + "</div>" : "") +
     "</div><span class=\"row\"><button data-series-playlist=\"" + index + "\" data-write>Create/update playlist</button>" +
-    "<button data-series-wizard=\"" + index + "\" data-write>Rename series</button></span></div>").join("");
+    "<button data-series-wizard=\"" + index + "\" data-write>Rename series</button>" +
+    "<button data-series-move=\"" + index + "\">Move to channel (plan)…</button></span></div>").join("");
 }
 
 el("series-list").addEventListener("click", (event) => {
   const playlistBtn = event.target.closest("[data-series-playlist]");
   if (playlistBtn) { createSeriesPlaylist(Number(playlistBtn.dataset.seriesPlaylist)); return; }
+  const moveBtn = event.target.closest("[data-series-move]");
+  if (moveBtn) { openSeriesMovePlan(Number(moveBtn.dataset.seriesMove)); return; }
   const button = event.target.closest("[data-series-wizard]");
   if (button) openSeriesWizard(Number(button.dataset.seriesWizard));
 });
@@ -5562,6 +5601,10 @@ async function loadAccounts() {
         "<p>Connect your first YouTube account from a terminal: <code>yt-manage account add</code> — it opens the Google consent flow, and the token is stored encrypted on this machine.</p></div>"
       : "";
     setStatus("account-status", accounts.length + " account(s)", "ok");
+    renderAccountSwitcher();
+    // Wave 7: the all-accounts overview + health centre (151, 154).
+    loadOverview();
+    loadHealthCentre();
   } catch (err) {
     setStatus("account-status", friendlyError(err), "error");
   }
@@ -5623,6 +5666,8 @@ const PALETTE_COMMANDS = [
   { label: "Go to Playlists", run: () => navigate("playlists") },
   { label: "Go to Insights", run: () => navigate("insights") },
   { label: "Go to Accounts", run: () => navigate("accounts") },
+  { label: "Go to Inbox", run: () => navigate("inbox") },
+  { label: "Go to Peers", run: () => navigate("peers") },
   { label: "Go to History", run: () => navigate("history") },
   { label: "Go to Settings", run: () => navigate("settings") },
   { label: "Sync now", run: () => runSync(el("sync-all-btn"), "sync-progress", "sync-result") },
@@ -5802,6 +5847,9 @@ setToggleChips(false, false, false);
 
 (async function init() {
   await loadStatus();
+  // Favourites (item 157) shape the channel selects, so load them
+  // before the first navigation paints them.
+  await loadFavourites();
   if (state.status && !state.status.appVersion) {
     try {
       const version = await api("GET", "/api/version");
@@ -5902,5 +5950,1094 @@ el("tags-list").addEventListener("click", async (event) => {
       setStatus("tag-status-" + index, friendlyError(err), "error");
       showErrorToast(err, "videos");
     }
+  }
+});
+
+// ------------------------------------------------ wave 7: shared helpers
+// Favourites (item 157): favourite channels sort to the top of
+// every channel list and select, marked with a star.
+function isFavourite(channelId) {
+  return state.favourites.has(String(channelId));
+}
+
+function sortedChannels(channels) {
+  return (channels || []).slice().sort((a, b) => {
+    const fa = isFavourite(a.id) ? 0 : 1;
+    const fb = isFavourite(b.id) ? 0 : 1;
+    return fa - fb;
+  });
+}
+
+function channelOptionsHTML(channels) {
+  return sortedChannels(channels).map((channel) =>
+    "<option value=\"" + channel.id + "\">" +
+    (isFavourite(channel.id) ? "★ " : "") + escapeHTML(channel.title) + "</option>").join("");
+}
+
+function refreshScopeOptions() {
+  if (!state.status) return;
+  const options = channelOptionsHTML(state.status.channels || []);
+  [["scope-channel"], ["wizard-channel"]].forEach(([id]) => {
+    const select = el(id);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = "<option value=\"\">All channels</option>" + options;
+    select.value = current;
+  });
+}
+
+async function loadFavourites() {
+  try {
+    const data = await api("GET", "/api/favourites");
+    state.favourites = new Set((data.channelIds || []).map(String));
+  } catch (err) {
+    state.favourites = new Set();
+  }
+  fillChannelSelects();
+  refreshScopeOptions();
+  return state.favourites;
+}
+
+async function toggleFavourite(channelId) {
+  const next = new Set(state.favourites);
+  const id = String(channelId);
+  if (next.has(id)) next.delete(id); else next.add(id);
+  try {
+    const data = await api("PUT", "/api/favourites", { channelIds: Array.from(next).map(Number) });
+    state.favourites = new Set((data.channelIds || []).map(String));
+  } catch (err) {
+    showErrorToast(err, "accounts");
+    return;
+  }
+  fillChannelSelects();
+  refreshScopeOptions();
+  renderOverview();
+  renderAccountFocusStrip();
+}
+
+// Overview data feeds the account cards, the focus strip and the
+// cross-account search labels (items 151, 152, 156).
+async function ensureOverview() {
+  if (state.overview) return state.overview;
+  try {
+    state.overview = await api("GET", "/api/overview");
+    indexProfiles();
+  } catch (err) { /* labels degrade to plain channel titles */ }
+  return state.overview;
+}
+
+function indexProfiles() {
+  state.profiles = {};
+  ((state.overview && state.overview.accounts) || []).forEach((account) => {
+    state.profiles[String(account.id)] = {
+      nickname: account.nickname || "", colour: account.colour || "", label: account.label || "",
+    };
+  });
+}
+
+function accountDisplayName(account) {
+  if (!account) return "";
+  return account.nickname || account.label || ("Account " + account.id);
+}
+
+// "Channel title · Account name" for one channel id, from the
+// overview payload (falling back to /api/accounts data).
+function channelScopeLabel(channelId) {
+  if (!channelId) return "";
+  const title = channelTitle(channelId);
+  let accountName = "";
+  const accounts = (state.overview && state.overview.accounts) || state.accounts || [];
+  for (const account of accounts) {
+    if ((account.channels || []).some((channel) => String(channel.id) === String(channelId))) {
+      accountName = accountDisplayName(account);
+      break;
+    }
+  }
+  if (!title && !accountName) return "";
+  return [title, accountName].filter(Boolean).join(" · ");
+}
+
+function accountColourDot(account) {
+  const colour = account && account.colour ? account.colour : "";
+  return "<span class=\"colour-dot\"" + (colour
+    ? " style=\"background:" + escapeHTML(colour) + ";border-color:" + escapeHTML(colour) + "\""
+    : "") + " aria-hidden=\"true\"></span>";
+}
+
+// --------------------------------------------------- overview (item 151)
+async function loadOverview() {
+  const box = el("overview-list");
+  if (!box) return;
+  try {
+    state.overview = await api("GET", "/api/overview");
+    indexProfiles();
+    renderOverview();
+    renderAccountSwitcher();
+    renderAccountFocusStrip();
+  } catch (err) {
+    box.innerHTML = "<p class=\"muted-text\">The overview could not be loaded.</p>";
+    setStatus("overview-status", friendlyError(err), "error");
+  }
+}
+
+function renderOverview() {
+  const box = el("overview-list");
+  if (!box || !state.overview) return;
+  const data = state.overview;
+  el("overview-quota").textContent =
+    "YouTube API quota today: " + (data.quotaUsedToday || 0) + " of " + (data.quotaBudget || 0) + " units" +
+    (data.readOnly ? " · Read-only mode is on" : "");
+  const accounts = data.accounts || [];
+  if (accounts.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">No accounts connected yet — connect one from a terminal with <code>yt-manage account add</code>.</p>";
+    return;
+  }
+  box.innerHTML = accounts.map((account) => {
+    const name = accountDisplayName(account);
+    const channels = sortedChannels(account.channels || []);
+    const channelRows = channels.length ? channels.map((channel) =>
+      "<div class=\"account-channel-row\">" +
+      "<button class=\"fav-btn" + (isFavourite(channel.id) ? " is-fav" : "") + "\" data-fav-channel=\"" + channel.id +
+        "\" title=\"" + (isFavourite(channel.id) ? "Remove from favourites" : "Pin as a favourite channel") +
+        "\" aria-label=\"Toggle favourite for " + escapeHTML(channel.title) + "\">" +
+        (isFavourite(channel.id) ? "★" : "☆") + "</button>" +
+      "<strong>" + escapeHTML(channel.title) + "</strong>" +
+      "<span class=\"pill\">" + (channel.videoCount || 0) + " videos</span>" +
+      "<span class=\"muted-text\">Last sync: " + (channel.lastSyncedAt ? escapeHTML(relativeTime(channel.lastSyncedAt)) : "never") + "</span>" +
+      "</div>").join("")
+      : "<p class=\"muted-text\">No channels mirrored for this account yet.</p>";
+    const attention = (account.attention || []).length
+      ? "<ul class=\"attention-list\">" + account.attention.map((reason) =>
+          "<li>⚠ " + escapeHTML(reason) + "</li>").join("") + "</ul>"
+      : "<p class=\"all-good\">✓ All good — nothing needs attention.</p>";
+    return "<div class=\"card account-card\"" + (account.colour
+        ? " style=\"border-top-color:" + escapeHTML(account.colour) + "\"" : "") + ">" +
+      "<div class=\"account-card-head\">" + accountColourDot(account) +
+      "<h3>" + escapeHTML(name) + "</h3>" +
+      (account.nickname && account.label ? "<span class=\"muted-text\">" + escapeHTML(account.label) + "</span>" : "") +
+      "<span class=\"pill\">" + (account.channelCount || 0) + " channel(s)</span>" +
+      "<span class=\"pill\">" + (account.videoCount || 0) + " videos</span>" +
+      "<span class=\"muted-text\">Last sync: " + (account.lastSyncAt ? escapeHTML(relativeTime(account.lastSyncAt)) : "never") + "</span>" +
+      "<span class=\"row\"><button data-open-account=\"" + account.id + "\" class=\"primary\">Open</button>" +
+      "<button data-sync-account=\"" + account.id + "\" data-write>Sync</button></span></div>" +
+      channelRows + attention +
+      "<div class=\"profile-editor\">" +
+      "<label>Nickname <input type=\"text\" id=\"profile-nickname-" + account.id + "\" value=\"" +
+        escapeHTML(account.nickname || "") + "\" placeholder=\"" + escapeHTML(account.label || "Account") + "\"></label>" +
+      "<label>Colour <input type=\"color\" id=\"profile-colour-" + account.id + "\" value=\"" +
+        escapeHTML(account.colour || "#4f8cff") + "\" data-rendered=\"" + escapeHTML(account.colour || "#4f8cff") + "\"></label>" +
+      "<button data-profile-save=\"" + account.id + "\" data-write>Save profile</button>" +
+      (account.colour ? "<button data-profile-clear=\"" + account.id + "\" data-write>Clear colour</button>" : "") +
+      "</div></div>";
+  }).join("");
+}
+
+el("overview-list").addEventListener("click", (event) => {
+  const favBtn = event.target.closest("[data-fav-channel]");
+  if (favBtn) { toggleFavourite(favBtn.dataset.favChannel); return; }
+  const openBtn = event.target.closest("[data-open-account]");
+  if (openBtn) { focusAccount(Number(openBtn.dataset.openAccount), true); return; }
+  const syncBtn = event.target.closest("[data-sync-account]");
+  if (syncBtn) { syncOneAccount(Number(syncBtn.dataset.syncAccount), syncBtn); return; }
+  const saveBtn = event.target.closest("[data-profile-save]");
+  if (saveBtn) { saveAccountProfile(Number(saveBtn.dataset.profileSave), false); return; }
+  const clearBtn = event.target.closest("[data-profile-clear]");
+  if (clearBtn) { saveAccountProfile(Number(clearBtn.dataset.profileClear), true); }
+});
+
+// Nicknames & colours (item 159).
+async function saveAccountProfile(accountId, clearColour) {
+  const account = ((state.overview && state.overview.accounts) || [])
+    .find((item) => String(item.id) === String(accountId));
+  const nickname = el("profile-nickname-" + accountId).value.trim();
+  const colourInput = el("profile-colour-" + accountId);
+  let colour = clearColour ? "" : colourInput.value;
+  // The colour input always shows a value; an untouched input on
+  // an account that never had a colour means "no colour".
+  if (!clearColour && account && !account.colour && colour === colourInput.dataset.rendered) colour = "";
+  try {
+    const saved = await api("PUT", "/api/accounts/" + accountId + "/profile", { nickname, colour });
+    if (account) {
+      account.nickname = saved.nickname || "";
+      account.colour = saved.colour || "";
+    }
+    indexProfiles();
+    renderOverview();
+    renderAccountSwitcher();
+    renderAccountFocusStrip();
+    showToast("Profile saved", "ok");
+  } catch (err) {
+    showErrorToast(err, "accounts");
+  }
+}
+
+async function syncOneAccount(accountId, button) {
+  if (state.syncing) return;
+  state.syncing = true;
+  startTask("sync-" + accountId, "Syncing account");
+  if (button) button.disabled = true;
+  try {
+    const data = await api("POST", "/api/sync", { accountId });
+    const failed = (data.results || []).filter((row) => row.error);
+    if (failed.length) showErrorToast(new Error(failed[0].error), "accounts");
+    else showToast("Account synced", "ok");
+    state.videosLoaded = false;
+    await loadStatus();
+    loadOverview();
+    loadHealthCentre();
+  } catch (err) {
+    showErrorToast(err, "accounts");
+  } finally {
+    state.syncing = false;
+    endTask("sync-" + accountId);
+    if (button) button.disabled = false;
+  }
+}
+
+// Bulk sync all with a combined summary (item 155): progress runs
+// through the progress centre, and each account's outcome —
+// channel, counts, or its own error — lands in one list.
+el("overview-sync-btn").addEventListener("click", async () => {
+  if (state.syncing) return;
+  const button = el("overview-sync-btn");
+  const box = el("overview-sync-summary");
+  state.syncing = true;
+  startTask("sync-all", "Syncing all accounts");
+  button.disabled = true;
+  setStatus("overview-status", "Syncing every account…");
+  try {
+    const data = await api("POST", "/api/sync", {});
+    const results = data.results || [];
+    box.innerHTML = "<h3>Sync summary</h3>" + (results.length ? results.map((row) =>
+      row.error
+        ? "<div class=\"sync-summary-row is-error\">✗ " + escapeHTML(row.channelTitle || ("Account " + row.accountId)) +
+          " — " + escapeHTML(row.error) + "</div>"
+        : "<div class=\"sync-summary-row\">✓ " + escapeHTML(row.channelTitle || ("Account " + row.accountId)) +
+          " — " + (row.videos || 0) + " videos, " + (row.playlists || 0) + " playlists, " +
+          (row.comments || 0) + " comments, " + (row.unitsEstimate || 0) + " API units" +
+          (row.isIncremental ? " (incremental)" : "") + "</div>").join("")
+      : "<p class=\"muted-text\">No accounts to sync.</p>") +
+      ((data.errors && data.errors.length)
+        ? "<ul>" + data.errors.map((err) => "<li class=\"status-line error\">" + escapeHTML(err) + "</li>").join("") + "</ul>"
+        : "");
+    const failedCount = results.filter((row) => row.error).length;
+    setStatus("overview-status",
+      failedCount ? "Sync finished — " + failedCount + " account(s) failed, the rest are up to date" : "All accounts synced",
+      failedCount ? "error" : "ok");
+    if (!failedCount) showToast("All accounts synced", "ok");
+    state.videosLoaded = false;
+    await loadStatus();
+    loadOverview();
+    loadHealthCentre();
+  } catch (err) {
+    setStatus("overview-status", friendlyError(err), "error");
+    showErrorToast(err, "accounts");
+  } finally {
+    state.syncing = false;
+    endTask("sync-all");
+    button.disabled = false;
+  }
+});
+
+// ---------------------------------------------- health centre (item 154)
+function healthFixAction(fix) {
+  const lower = String(fix || "").toLowerCase();
+  if (lower.indexOf("sync") !== -1) return "sync";
+  if (lower.indexOf("settings") !== -1) return "settings";
+  if (lower.indexOf("accounts") !== -1) return "accounts";
+  return "";
+}
+
+async function loadHealthCentre() {
+  const box = el("health-centre");
+  if (!box) return;
+  try {
+    const checks = await api("GET", "/api/health");
+    const rows = Array.isArray(checks) ? checks : [];
+    state.healthChecks = rows;
+    box.innerHTML = "<div class=\"card\"><h2>Health centre</h2>" +
+      (rows.length ? rows.map((check, index) => {
+        const action = check.fix ? healthFixAction(check.fix) : "";
+        const label = action === "sync" ? "Run a sync" : action === "settings" ? "Open Settings" : action === "accounts" ? "Open Accounts" : "";
+        return "<div class=\"health-centre-row\">" +
+          "<span class=\"health-icon " + (check.ok ? "ok" : "bad") + "\" aria-hidden=\"true\">" + (check.ok ? "✓" : "⚠") + "</span>" +
+          "<strong>" + escapeHTML(check.scope || "") + "</strong>" +
+          "<span>" + escapeHTML(check.message || "") + "</span>" +
+          (check.fix
+            ? (action
+              ? "<button data-health-fix=\"" + index + "\" data-action=\"" + action + "\">" + label + "</button>" +
+                "<span class=\"muted-text\">" + escapeHTML(check.fix) + "</span>"
+              : "<span class=\"muted-text\">Fix: " + escapeHTML(check.fix) + "</span>")
+            : "") +
+          "</div>";
+      }).join("") : "<p class=\"muted-text\">No health checks reported.</p>") + "</div>";
+  } catch (err) {
+    box.innerHTML = "";
+  }
+}
+
+el("health-centre").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-health-fix]");
+  if (!button) return;
+  const action = button.dataset.action;
+  if (action === "settings") { navigate("settings"); return; }
+  if (action === "accounts") { navigate("accounts"); return; }
+  if (action === "sync") {
+    const check = (state.healthChecks || [])[Number(button.dataset.healthFix)];
+    let accountId = null;
+    if (check) {
+      const accounts = state.accounts || (state.overview && state.overview.accounts) || [];
+      const found = accounts.find((account) =>
+        (account.label && check.scope.indexOf(account.label) !== -1) ||
+        (account.channels || []).some((channel) => check.scope.indexOf(channel.title) !== -1));
+      if (found) accountId = found.id;
+    }
+    if (accountId) syncOneAccount(accountId, null);
+    else el("overview-sync-btn").click();
+  }
+});
+
+// --------------------------------- per-account home & switcher (156, 160)
+function focusedAccountId() {
+  const value = LS.get("focusAccount", "");
+  return value === "" || value === null || value === undefined ? null : Number(value);
+}
+
+// Focusing an account scopes the UI through the existing channel
+// scope (its first channel) and lands Home on the account strip.
+async function focusAccount(accountId, goHome) {
+  await ensureOverview();
+  await ensureAccountsLoaded();
+  const account = ((state.overview && state.overview.accounts) || [])
+    .find((item) => String(item.id) === String(accountId)) ||
+    (state.accounts || []).find((item) => String(item.id) === String(accountId));
+  LS.set("focusAccount", accountId);
+  const channels = (account && account.channels) || [];
+  if (channels.length) applyScope(channels[0].id, false);
+  renderAccountFocusStrip();
+  renderAccountSwitcher();
+  if (goHome) navigate("home");
+}
+
+async function renderAccountFocusStrip() {
+  const strip = el("account-focus-strip");
+  if (!strip) return;
+  const accountId = focusedAccountId();
+  if (!accountId) {
+    strip.classList.add("hidden");
+    strip.innerHTML = "";
+    return;
+  }
+  await ensureOverview();
+  await ensureAccountsLoaded();
+  const account = ((state.overview && state.overview.accounts) || [])
+    .find((item) => String(item.id) === String(accountId)) ||
+    (state.accounts || []).find((item) => String(item.id) === String(accountId));
+  if (!account) {
+    strip.classList.add("hidden");
+    strip.innerHTML = "";
+    return;
+  }
+  const channels = account.channels || [];
+  const attention = account.attention || [];
+  strip.classList.remove("hidden");
+  strip.style.borderLeftColor = account.colour || "";
+  strip.innerHTML = accountColourDot(account) +
+    "<strong>" + escapeHTML(accountDisplayName(account)) + "</strong>" +
+    "<span class=\"muted-text\">Channels: " +
+      (channels.length
+        ? channels.map((channel) => escapeHTML((isFavourite(channel.id) ? "★ " : "") + channel.title)).join(", ")
+        : "none mirrored yet") + "</span>" +
+    "<span class=\"muted-text\">Last sync: " + (account.lastSyncAt ? escapeHTML(relativeTime(account.lastSyncAt)) : "—") + "</span>" +
+    (attention.length
+      ? "<span class=\"pill tl-missed\">⚠ " + attention.length + " need(s) attention</span>"
+      : "<span class=\"all-good\">✓ All good</span>") +
+    "<span class=\"row\"><button id=\"focus-strip-accounts\">Open in Accounts</button>" +
+    "<button id=\"focus-strip-clear\">Clear focus</button></span>";
+  el("focus-strip-accounts").addEventListener("click", () => navigate("accounts"));
+  el("focus-strip-clear").addEventListener("click", () => {
+    LS.set("focusAccount", "");
+    strip.classList.add("hidden");
+    strip.innerHTML = "";
+    renderAccountSwitcher();
+    showToast("Account focus cleared", "ok");
+  });
+}
+
+function renderAccountSwitcher() {
+  const select = el("scope-account");
+  if (!select) return;
+  const accounts = state.accounts || (state.overview && state.overview.accounts) || [];
+  const current = select.value;
+  select.innerHTML = "<option value=\"\">All accounts</option>" + accounts.map((account) =>
+    "<option value=\"" + account.id + "\">" + escapeHTML(accountDisplayName(account)) + "</option>").join("");
+  let wanted = current;
+  if (!wanted) {
+    const focus = focusedAccountId();
+    if (focus) wanted = String(focus);
+  }
+  if (!wanted && state.settingsData) {
+    const setting = (state.settingsData.settings || []).find((item) => item.key === "default_account");
+    if (setting) wanted = settingValueString(setting);
+  }
+  if (wanted && accounts.some((account) => String(account.id) === String(wanted))) {
+    select.value = wanted;
+  }
+}
+
+// Switching the header account persists it as the default account
+// (item 160) — a plain settings write, no restart or re-auth —
+// and scopes this session to the account.
+el("scope-account").addEventListener("change", async () => {
+  const value = el("scope-account").value;
+  if (!value) {
+    LS.set("focusAccount", "");
+    renderAccountFocusStrip();
+    return;
+  }
+  try {
+    const data = await api("PUT", "/api/settings", { key: "default_account", value: String(value) });
+    state.settingsData = data;
+    showToast("Default account set — this session is scoped to it", "ok");
+  } catch (err) {
+    showErrorToast(err, "accounts");
+  }
+  focusAccount(Number(value), false);
+});
+
+// ------------------------------------------------ move-series plan (158)
+function openSeriesMovePlan(index) {
+  const series = (state.series || [])[index];
+  if (!series) return;
+  state.moveSeries = series;
+  const panel = el("series-move-panel");
+  const channels = ((state.status && state.status.channels) || [])
+    .filter((channel) => String(channel.id) !== String(series.channelId));
+  panel.classList.remove("hidden");
+  panel.innerHTML =
+    "<h3>Move “" + escapeHTML(series.seriesKey) + "” to another channel — plan only</h3>" +
+    "<p class=\"muted-text\">The YouTube API cannot move videos between channels, so this builds the step-by-step plan a human follows in Studio. Nothing is changed by building or viewing the plan.</p>" +
+    "<label>Target channel <select id=\"move-target\">" +
+    (channels.length
+      ? channels.map((channel) => "<option value=\"" + channel.id + "\">" + escapeHTML(channel.title) + "</option>").join("")
+      : "<option value=\"\">No other channel is mirrored</option>") +
+    "</select></label>" +
+    "<div class=\"row\"><button id=\"move-build-btn\" class=\"primary\"" + (channels.length ? "" : " disabled") + ">Build the plan</button>" +
+    "<button id=\"move-close-btn\">Close</button></div>" +
+    "<div class=\"status-line\" id=\"move-status\"></div>" +
+    "<div id=\"move-plan-result\"></div>";
+  el("move-close-btn").addEventListener("click", () => {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+    state.moveSeries = null;
+  });
+  const buildBtn = el("move-build-btn");
+  if (buildBtn) buildBtn.addEventListener("click", buildMovePlan);
+  panel.scrollIntoView({ block: "nearest" });
+}
+
+async function buildMovePlan() {
+  const series = state.moveSeries;
+  if (!series) return;
+  const target = el("move-target").value;
+  if (!target) { setStatus("move-status", "Choose a target channel first.", "error"); return; }
+  setStatus("move-status", "Building the plan…");
+  try {
+    const data = await api("GET", "/api/series/move-plan?channelId=" + encodeURIComponent(series.channelId) +
+      "&series=" + encodeURIComponent(series.seriesKey) + "&targetChannelId=" + encodeURIComponent(target));
+    el("move-plan-result").innerHTML =
+      "<div class=\"warn-box\">" + escapeHTML(data.note || "Plan only — nothing was changed.") + "</div>" +
+      "<p><strong>" + escapeHTML(data.seriesKey || series.seriesKey) + "</strong>: " +
+      escapeHTML(data.fromChannel || "") + " → " + escapeHTML(data.toChannel || "") + "</p>" +
+      "<h4>Videos in this series (" + (data.videos || []).length + ")</h4>" +
+      ((data.videos || []).length
+        ? "<ul class=\"move-video-list\">" + data.videos.map((video) =>
+          "<li>" + escapeHTML(video.title) + " <span class=\"pill\">" + escapeHTML(video.ytVideoId || "") + "</span></li>").join("") + "</ul>"
+        : "<p class=\"muted-text\">No videos matched this series on the source channel.</p>") +
+      "<h4>Checklist</h4>" +
+      "<ul class=\"checklist move-steps\">" + (data.steps || []).map((step) =>
+        "<li><label class=\"check\"><input type=\"checkbox\"> <span>" + escapeHTML(step) + "</span></label></li>").join("") + "</ul>";
+    setStatus("move-status", "Plan ready — nothing was changed.", "ok");
+  } catch (err) {
+    setStatus("move-status", friendlyError(err), "error");
+    showErrorToast(err, "episodes");
+  }
+}
+
+// ------------------------------------------- notifications (161, 168, 170)
+async function loadNotifyPrefs() {
+  if (!el("notify-digest")) return;
+  try {
+    const prefs = await api("GET", "/api/notify/prefs");
+    el("notify-digest").value = prefs.digest || "digest";
+    el("notify-failures").value = prefs.failures || "instant";
+    el("notify-goinglive").value = prefs.goingLive || "instant";
+    el("notify-weekly").value = prefs.weekly || "digest";
+    el("notify-time").value = prefs.digestTime || "08:00";
+    renderNotifyChannels(prefs.excludedChannelIds || []);
+  } catch (err) {
+    setStatus("notify-status", friendlyError(err), "error");
+  }
+}
+
+function renderNotifyChannels(excludedIds) {
+  const box = el("notify-channels");
+  if (!box) return;
+  const channels = (state.status && state.status.channels) || [];
+  const excluded = new Set((excludedIds || []).map(String));
+  if (channels.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">No channels mirrored yet.</p>";
+    return;
+  }
+  box.innerHTML = sortedChannels(channels).map((channel) =>
+    "<label class=\"check\"><input type=\"checkbox\" data-notify-channel=\"" + channel.id + "\"" +
+    (excluded.has(String(channel.id)) ? "" : " checked") + "> " +
+    escapeHTML((isFavourite(channel.id) ? "★ " : "") + channel.title) + "</label>").join("");
+}
+
+el("notify-save-btn").addEventListener("click", async () => {
+  const excluded = [];
+  document.querySelectorAll("[data-notify-channel]").forEach((box) => {
+    if (!box.checked) excluded.push(Number(box.dataset.notifyChannel));
+  });
+  const prefs = {
+    digest: el("notify-digest").value,
+    failures: el("notify-failures").value,
+    goingLive: el("notify-goinglive").value,
+    weekly: el("notify-weekly").value,
+    digestTime: el("notify-time").value || "08:00",
+    excludedChannelIds: excluded,
+  };
+  setStatus("notify-status", "Saving…");
+  try {
+    await api("PUT", "/api/notify/prefs", prefs);
+    setStatus("notify-status", "Notification preferences saved.", "ok");
+    showToast("Notification preferences saved", "ok");
+  } catch (err) {
+    // Server-side validation/config messages are shown as-is.
+    setStatus("notify-status", err.message, "error");
+    showErrorToast(err, "settings");
+  }
+});
+
+async function sendNotifyNow(kind, label) {
+  setStatus("notify-status", "Sending " + label + "…");
+  try {
+    await api("POST", "/api/notify/" + kind, {});
+    setStatus("notify-status", label + " sent.", "ok");
+    showToast(label + " sent", "ok");
+  } catch (err) {
+    // Plain configuration messages (e.g. SMTP not configured)
+    // are the explanation — show them exactly as returned.
+    setStatus("notify-status", err.message, "error");
+  }
+}
+
+el("notify-send-digest").addEventListener("click", () => sendNotifyNow("digest", "Publish digest"));
+el("notify-send-weekly").addEventListener("click", () => sendNotifyNow("weekly", "Weekly report"));
+
+document.querySelectorAll("[data-notify-test]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const kind = button.dataset.notifyTest;
+    setStatus("notify-status", "Sending a test " + kind + " email…");
+    try {
+      await api("POST", "/api/notify/test", { kind });
+      setStatus("notify-status", "Test " + kind + " email sent.", "ok");
+      showToast("Test email sent (" + kind + ")", "ok");
+    } catch (err) {
+      setStatus("notify-status", err.message, "error");
+    }
+  });
+});
+
+// ------------------------------------------------ publish timeline (165)
+function timelineChannelId() {
+  return el("timeline-channel").value || LS.get("scopeChannel", "") || "";
+}
+
+async function loadTimeline() {
+  const box = el("timeline-list");
+  if (!box) return;
+  const channelId = timelineChannelId();
+  if (channelId) el("timeline-channel").value = channelId;
+  if (!channelId) {
+    setStatus("timeline-status", "Choose a channel to load its timeline.", "error");
+    return;
+  }
+  const days = el("timeline-days").value || "30";
+  setStatus("timeline-status", "Loading timeline…");
+  try {
+    const items = await api("GET", "/api/timeline?channelId=" + encodeURIComponent(channelId) +
+      "&days=" + encodeURIComponent(days));
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+      box.innerHTML = "<p class=\"muted-text\">Nothing published or scheduled in this window.</p>";
+      setStatus("timeline-status", "0 publishes in the window", "ok");
+      return;
+    }
+    const byDay = new Map();
+    list.forEach((item) => {
+      const key = planDateKey(item.at);
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(item);
+    });
+    let html = "";
+    byDay.forEach((dayItems) => {
+      const heading = new Date(dayItems[0].at)
+        .toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+      html += "<div class=\"timeline-day\"><h3>" + escapeHTML(heading) + "</h3>" +
+        dayItems.map((item) =>
+          "<div class=\"timeline-item\">" +
+          "<span class=\"pill tl-pill tl-" + escapeHTML(item.status || "") + "\">" + escapeHTML(item.status || "") + "</span>" +
+          "<span class=\"muted-text\">" +
+            escapeHTML(new Date(item.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })) + "</span>" +
+          "<strong>" + escapeHTML(item.title) + "</strong>" +
+          "<span class=\"muted-text\">" + escapeHTML(item.visibility || "") + "</span>" +
+          (item.ytVideoId
+            ? "<a href=\"https://www.youtube.com/watch?v=" + encodeURIComponent(item.ytVideoId) +
+              "\" target=\"_blank\" rel=\"noopener\">Watch</a>"
+            : "") +
+          "</div>").join("") + "</div>";
+    });
+    box.innerHTML = html;
+    setStatus("timeline-status", list.length + " publish(es) in the window", "ok");
+  } catch (err) {
+    setStatus("timeline-status", friendlyError(err), "error");
+  }
+}
+
+el("timeline-load-btn").addEventListener("click", loadTimeline);
+el("timeline-channel").addEventListener("change", loadTimeline);
+el("timeline-days").addEventListener("change", loadTimeline);
+
+// --------------------------------------------- missed-publish recovery (166)
+async function fetchMissed() {
+  try {
+    const items = await api("GET", "/api/missed");
+    state.missed = Array.isArray(items) ? items : [];
+  } catch (err) {
+    state.missed = [];
+  }
+  return state.missed;
+}
+
+async function loadMissedBanner() {
+  const area = el("missed-banner");
+  if (!area) return;
+  const items = await fetchMissed();
+  if (items.length === 0) { area.innerHTML = ""; return; }
+  const worst = items.slice().sort((x, y) => (y.hoursLate || 0) - (x.hoursLate || 0))[0];
+  area.innerHTML = "<div class=\"banner\" role=\"alert\">" +
+    "<span class=\"banner-text\"><strong>" + items.length + " scheduled video(s) missed their publish time.</strong> " +
+    "Worst: “" + escapeHTML(worst.title) + "” is " + Math.round(worst.hoursLate || 0) + "h late.</span>" +
+    "<button class=\"banner-action\" id=\"missed-review-btn\">Review</button>" +
+    "<button class=\"banner-close\" id=\"missed-dismiss-btn\" title=\"Dismiss\">✕</button></div>";
+  el("missed-review-btn").addEventListener("click", async () => {
+    navigate("schedules");
+    await loadMissedPanel();
+    const card = el("missed-card");
+    if (card) card.scrollIntoView({ block: "start" });
+  });
+  el("missed-dismiss-btn").addEventListener("click", () => { area.innerHTML = ""; });
+}
+
+async function loadMissedPanel() {
+  const box = el("missed-list");
+  if (!box) return;
+  const items = await fetchMissed();
+  if (items.length === 0) {
+    box.innerHTML = "<p class=\"result-ok\">No missed publishes — every scheduled video went out on time ✓</p>";
+    return;
+  }
+  box.innerHTML = items.map((item) =>
+    "<div class=\"missed-row\" data-missed-row=\"" + item.videoId + "\">" +
+    "<span class=\"pill tl-pill tl-missed\">missed</span>" +
+    "<strong>" + escapeHTML(item.title) + "</strong>" +
+    "<span class=\"muted-text\">" + escapeHTML(channelTitle(item.channelId) || ("channel " + item.channelId)) +
+      " · was due " + escapeHTML(formatPlanDate(item.publishAt)) +
+      " (" + Math.round(item.hoursLate || 0) + "h late)</span>" +
+    (item.ytVideoId
+      ? "<a href=\"https://www.youtube.com/watch?v=" + encodeURIComponent(item.ytVideoId) +
+        "\" target=\"_blank\" rel=\"noopener\">Watch</a>"
+      : "") +
+    "<button data-reschedule=\"" + item.videoId + "\" data-channel=\"" + item.channelId + "\" data-write>Reschedule…</button>" +
+    "</div>").join("");
+}
+
+el("missed-list").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-reschedule]");
+  if (button) rescheduleMissed(Number(button.dataset.reschedule), Number(button.dataset.channel));
+});
+
+// The schedule flow is episode-based (there is no single-video
+// schedule endpoint), so rescheduling opens the schedule form of
+// the episode containing the video; the plan rebuilds from the
+// new start date and nothing applies until it is submitted.
+async function rescheduleMissed(videoId, channelId) {
+  const item = (state.missed || []).find((entry) => String(entry.videoId) === String(videoId));
+  let episode = null;
+  try {
+    const episodes = await api("GET", "/api/episodes?channel=" + encodeURIComponent(channelId));
+    episode = (episodes || []).find((candidate) =>
+      (candidate.parts || []).some((part) => String(part.videoId) === String(videoId)));
+  } catch (err) { /* handled by the fallback below */ }
+  if (!episode) {
+    showToast("“" + (item ? item.title : "Video " + videoId) + "” is not part of a grouped episode, " +
+      "so there is no episode schedule to rebuild — opening it in Videos instead.", "error");
+    try {
+      const video = await api("GET", "/api/videos/" + videoId);
+      navigate("videos");
+      openDrawer(video);
+    } catch (err) {
+      navigate("videos");
+    }
+    return;
+  }
+  el("episode-channel").value = channelId;
+  navigate("episodes");
+  await loadEpisodes();
+  state.currentEpisodeId = String(episode.id);
+  recordRecentEpisode(episode);
+  el("schedule-form").classList.remove("hidden");
+  el("schedule-episode-id").textContent = "#" + episode.id;
+  setStatus("schedule-status", "");
+  el("schedule-result").innerHTML = "";
+  el("schedule-scope").textContent = "";
+  hidePreflight("schedule-preflight");
+  state.schedulePlan = null;
+  renderSchedulePlan();
+  el("schedule-form").scrollIntoView({ block: "start" });
+  showToast("Reschedule “" + (item ? item.title : (episode.title || "episode")) +
+    "”: pick a new start date — the episode plan rebuilds from it and nothing applies until you submit.", "ok");
+}
+
+// ---------------------------------------------------------- inbox (item 167)
+async function loadMailInbox() {
+  const box = el("mail-list");
+  if (!box) return;
+  setStatus("mail-status", "Loading inbox…");
+  try {
+    const messages = await api("GET", "/api/inbox?limit=50");
+    state.mailInbox = Array.isArray(messages) ? messages : [];
+    setStatus("mail-status", state.mailInbox.length + " message(s)", "ok");
+    renderMailInbox();
+  } catch (err) {
+    state.mailInbox = [];
+    setStatus("mail-status", "");
+    box.innerHTML = "<div class=\"empty-state\"><span class=\"state-art\" aria-hidden=\"true\">✉</span><h3>Inbox not available</h3>" +
+      "<p>" + escapeHTML(err.message) + "</p>" +
+      "<p>Once the mail account's IMAP settings are in place, its mail shows up here.</p></div>";
+  }
+}
+
+function renderMailInbox() {
+  const box = el("mail-list");
+  if (!box) return;
+  const needle = el("mail-filter").value.trim().toLowerCase();
+  const messages = (state.mailInbox || []).filter((message) =>
+    !needle || (String(message.from || "") + " " + String(message.subject || ""))
+      .toLowerCase().indexOf(needle) !== -1);
+  if (messages.length === 0) {
+    box.innerHTML = "<p class=\"muted-text\">" +
+      (needle ? "No messages match the filter." : "The inbox is empty.") + "</p>";
+    return;
+  }
+  box.innerHTML = messages.map((message) =>
+    "<div class=\"inbox-row\"><strong>" + escapeHTML(message.subject || "(no subject)") + "</strong>" +
+    "<div class=\"inbox-meta\">From " + escapeHTML(message.from || "") + " · " +
+    escapeHTML(message.date ? new Date(message.date).toLocaleString() : "") + "</div></div>").join("");
+}
+
+el("mail-refresh-btn").addEventListener("click", loadMailInbox);
+el("mail-filter").addEventListener("input", renderMailInbox);
+
+// ------------------------------------------------------------ peers (171)
+function allChannelsFlat() {
+  const channels = (state.status && state.status.channels) || [];
+  if (channels.length) return channels;
+  const flat = [];
+  (state.accounts || []).forEach((account) =>
+    (account.channels || []).forEach((channel) => flat.push(channel)));
+  return flat;
+}
+
+async function loadPeers() {
+  const box = el("peers-list");
+  if (!box) return;
+  setStatus("peers-status", "Loading peers…");
+  try {
+    await ensureAccountsLoaded();
+    const peers = await api("GET", "/api/peers");
+    state.peers = Array.isArray(peers) ? peers : [];
+    setStatus("peers-status", state.peers.length + " peer(s)", "ok");
+    renderPeers();
+  } catch (err) {
+    setStatus("peers-status", friendlyError(err), "error");
+    showErrorToast(err, "peers");
+  }
+}
+
+// Peer cards with the selective-sharing editor (item 172): the
+// checkboxes are exactly what a push sends and what a pull from
+// this machine hands out — nothing is shared by default.
+function renderPeers() {
+  const box = el("peers-list");
+  if (!box) return;
+  const channels = allChannelsFlat();
+  if (state.peers.length === 0) {
+    box.innerHTML = "<div class=\"empty-state\"><span class=\"state-art\" aria-hidden=\"true\">⇄</span><h3>No peers yet</h3>" +
+      "<p>Add the other machine below — you need its base URL and the shared secret both installations agreed on.</p></div>";
+    return;
+  }
+  box.innerHTML = state.peers.map((peer) => {
+    const shared = new Set((peer.sharedChannelIds || []).map(String));
+    return "<div class=\"card peer-card\" data-peer-card=\"" + peer.id + "\">" +
+      "<div class=\"account-card-head\"><h3>" + escapeHTML(peer.name) + "</h3>" +
+      "<span class=\"muted-text\">" + escapeHTML(peer.baseUrl) + "</span>" +
+      "<span class=\"pill\">Last seen: " + (peer.lastSeenAt ? escapeHTML(relativeTime(peer.lastSeenAt)) : "never") + "</span>" +
+      "<span class=\"pill\">" + shared.size + " channel(s) shared</span>" +
+      "<span class=\"row\"><button data-peer-push=\"" + peer.id + "\" data-write>Push</button>" +
+      "<button data-peer-pull=\"" + peer.id + "\" data-write>Pull</button>" +
+      "<button data-peer-conflicts=\"" + peer.id + "\">Find conflicts</button>" +
+      "<button data-peer-delete=\"" + peer.id + "\" data-write>Remove peer</button></span></div>" +
+      "<div class=\"peer-sharing\"><strong>Sharing</strong> " +
+      (shared.size === 0
+        ? "<span class=\"muted-text\">— nothing shared yet: this peer receives nothing until you tick a channel.</span>"
+        : "") +
+      "<div>" + (channels.length
+        ? sortedChannels(channels).map((channel) =>
+          "<label class=\"check\"><input type=\"checkbox\" data-peer-channel=\"" + peer.id +
+          "\" value=\"" + channel.id + "\"" + (shared.has(String(channel.id)) ? " checked" : "") + "> " +
+          escapeHTML((isFavourite(channel.id) ? "★ " : "") + channel.title) + "</label>").join("")
+        : "<span class=\"muted-text\">No channels mirrored yet.</span>") +
+      "</div><div class=\"row\"><button data-peer-sharing-save=\"" + peer.id + "\" data-write>Save sharing</button></div>" +
+      "<p class=\"muted-text\">Only shared channels are sent. Peers pulling from this machine get the same selection.</p></div>" +
+      "<div class=\"peer-result\" id=\"peer-result-" + peer.id + "\"></div>" +
+      "<div id=\"peer-conflicts-" + peer.id + "\"></div>" +
+      "</div>";
+  }).join("");
+}
+
+el("peers-list").addEventListener("click", (event) => {
+  const pushBtn = event.target.closest("[data-peer-push]");
+  if (pushBtn) { runPeerSync(Number(pushBtn.dataset.peerPush), "push", pushBtn); return; }
+  const pullBtn = event.target.closest("[data-peer-pull]");
+  if (pullBtn) { runPeerSync(Number(pullBtn.dataset.peerPull), "pull", pullBtn); return; }
+  const conflictsBtn = event.target.closest("[data-peer-conflicts]");
+  if (conflictsBtn) { findPeerConflicts(Number(conflictsBtn.dataset.peerConflicts), conflictsBtn); return; }
+  const deleteBtn = event.target.closest("[data-peer-delete]");
+  if (deleteBtn) { deletePeer(Number(deleteBtn.dataset.peerDelete)); return; }
+  const sharingBtn = event.target.closest("[data-peer-sharing-save]");
+  if (sharingBtn) { savePeerSharing(Number(sharingBtn.dataset.peerSharingSave)); return; }
+  const keepBtn = event.target.closest("[data-conflict-keep]");
+  if (keepBtn) {
+    resolvePeerConflict(Number(keepBtn.dataset.peerId), keepBtn.dataset.ytid, keepBtn.dataset.conflictKeep, keepBtn);
+  }
+});
+
+// Push/pull can take a while against a slow peer: the button is
+// disabled and the progress centre tracks the run.
+async function runPeerSync(peerId, direction, button) {
+  const resultBox = el("peer-result-" + peerId);
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = direction === "push" ? "Pushing…" : "Pulling…";
+  startTask("peer-" + direction + "-" + peerId, (direction === "push" ? "Pushing to peer " : "Pulling from peer ") + peerId);
+  if (resultBox) resultBox.innerHTML = "<p class=\"muted-text\">Working — this can take up to a minute.</p>";
+  try {
+    const result = await api("POST", "/api/peers/" + peerId + "/" + direction, {});
+    const line = (result.videosApplied || 0) + " videos applied, " + (result.videosSkipped || 0) + " skipped, " +
+      (result.playlistsApplied || 0) + " playlists applied, " + (result.itemsApplied || 0) + " playlist items";
+    if (resultBox) {
+      resultBox.innerHTML = "<p class=\"status-line ok\">" +
+        (direction === "push" ? "Pushed" : "Pulled") + ": " + escapeHTML(line) + "</p>";
+    }
+    showToast((direction === "push" ? "Push" : "Pull") + " complete: " + line, "ok");
+    state.videosLoaded = false;
+    loadStatus();
+    loadPeers();
+  } catch (err) {
+    if (resultBox) resultBox.innerHTML = "<p class=\"status-line error\">" + escapeHTML(err.message) + "</p>";
+    showErrorToast(err, "peers");
+  } finally {
+    endTask("peer-" + direction + "-" + peerId);
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function savePeerSharing(peerId) {
+  const ids = [];
+  document.querySelectorAll("[data-peer-channel=\"" + peerId + "\"]").forEach((box) => {
+    if (box.checked) ids.push(Number(box.value));
+  });
+  try {
+    await api("PUT", "/api/peers/" + peerId + "/sharing", { channelIds: ids });
+    showToast(ids.length
+      ? "Sharing saved: " + ids.length + " channel(s) shared with this peer"
+      : "Sharing saved: this peer now receives nothing", "ok");
+    loadPeers();
+  } catch (err) {
+    showErrorToast(err, "peers");
+  }
+}
+
+async function deletePeer(peerId) {
+  const peer = (state.peers || []).find((item) => String(item.id) === String(peerId));
+  if (!window.confirm("Remove peer “" + (peer ? peer.name : peerId) + "”? " +
+    "Its sharing selection is forgotten; anything already synced stays synced.")) return;
+  try {
+    await api("DELETE", "/api/peers/" + peerId);
+    showToast("Peer removed", "ok");
+    loadPeers();
+  } catch (err) {
+    showErrorToast(err, "peers");
+  }
+}
+
+// Conflict view (item 173): both copies side by side, with a
+// pick-a-winner action per differing video.
+async function findPeerConflicts(peerId, button) {
+  const box = el("peer-conflicts-" + peerId);
+  if (!box) return;
+  button.disabled = true;
+  startTask("peer-conflicts-" + peerId, "Comparing mirrors with peer " + peerId);
+  box.innerHTML = "<p class=\"muted-text\">Fetching the peer's mirror and comparing — this can take up to a minute.</p>";
+  try {
+    const conflicts = await api("POST", "/api/peers/" + peerId + "/conflicts", {});
+    const list = Array.isArray(conflicts) ? conflicts : [];
+    if (list.length === 0) {
+      box.innerHTML = "<p class=\"result-ok\">No conflicts — both mirrors agree on every video they share ✓</p>";
+      return;
+    }
+    box.innerHTML = "<h4>" + list.length + " conflict(s) — pick a winner for each</h4>" + list.map((conflict) =>
+      "<div class=\"conflict-block\" data-conflict-block=\"" + escapeHTML(conflict.ytVideoId) + "\">" +
+      "<strong>" + escapeHTML(conflict.ytVideoId) + "</strong>" +
+      "<div class=\"conflict-cols\">" +
+      "<div><span class=\"pill\">This machine</span><pre>" + escapeHTML(conflict.local) + "</pre>" +
+      "<button data-conflict-keep=\"local\" data-peer-id=\"" + peerId + "\" data-ytid=\"" +
+        escapeHTML(conflict.ytVideoId) + "\" data-write>Keep mine</button></div>" +
+      "<div><span class=\"pill\">Peer</span><pre>" + escapeHTML(conflict.remote) + "</pre>" +
+      "<button data-conflict-keep=\"remote\" data-peer-id=\"" + peerId + "\" data-ytid=\"" +
+        escapeHTML(conflict.ytVideoId) + "\" data-write>Keep theirs</button></div>" +
+      "</div></div>").join("");
+  } catch (err) {
+    box.innerHTML = "<p class=\"status-line error\">" + escapeHTML(err.message) + "</p>";
+    showErrorToast(err, "peers");
+  } finally {
+    endTask("peer-conflicts-" + peerId);
+    button.disabled = false;
+  }
+}
+
+async function resolvePeerConflict(peerId, ytVideoId, winner, button) {
+  button.disabled = true;
+  try {
+    await api("POST", "/api/peers/" + peerId + "/conflicts/resolve", { ytVideoId, winner });
+    const block = button.closest("[data-conflict-block]");
+    if (block) block.remove();
+    showToast("Conflict on " + ytVideoId + " resolved — kept the " +
+      (winner === "local" ? "local" : "peer's") + " copy", "ok");
+    state.videosLoaded = false;
+  } catch (err) {
+    button.disabled = false;
+    showErrorToast(err, "peers");
+  }
+}
+
+el("peer-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = el("peer-name").value.trim();
+  const baseUrl = el("peer-url").value.trim();
+  const secret = el("peer-secret").value;
+  if (!name || !baseUrl || !secret) {
+    setStatus("peer-form-status", "Name, base URL and shared secret are all required.", "error");
+    return;
+  }
+  setStatus("peer-form-status", "Adding peer…");
+  try {
+    await api("POST", "/api/peers", { name, baseUrl, secret });
+    el("peer-name").value = "";
+    el("peer-url").value = "";
+    el("peer-secret").value = "";
+    setStatus("peer-form-status", "Peer added — choose what to share with it above.", "ok");
+    showToast("Peer “" + name + "” added", "ok");
+    loadPeers();
+  } catch (err) {
+    setStatus("peer-form-status", err.message, "error");
+    showErrorToast(err, "peers");
+  }
+});
+
+// --------------------------------------------- export/import bundle (174, 175)
+// Export is the plain download link in Settings; import is
+// preview-first: the file is read and previewed, and nothing is
+// written until "Apply import" posts the same bundle to apply.
+el("bundle-import-file").addEventListener("change", async () => {
+  const input = el("bundle-import-file");
+  const file = input.files && input.files[0];
+  const previewBox = el("bundle-import-preview");
+  el("bundle-apply-btn").classList.add("hidden");
+  state.importBundle = null;
+  if (!file) return;
+  setStatus("bundle-status", "Reading " + file.name + "…");
+  try {
+    const text = await file.text();
+    let bundle;
+    try {
+      bundle = JSON.parse(text);
+    } catch (parseErr) {
+      throw new Error("That file is not valid JSON — an export bundle is a .json file downloaded from Settings.");
+    }
+    const preview = await api("POST", "/api/import/preview", bundle);
+    state.importBundle = bundle;
+    previewBox.innerHTML =
+      "<table class=\"grid\"><tbody>" +
+      "<tr><td>Videos to add</td><td>" + (preview.videosAdd || 0) + "</td></tr>" +
+      "<tr><td>Videos to update</td><td>" + (preview.videosUpdate || 0) + "</td></tr>" +
+      "<tr><td>Videos to skip (already current)</td><td>" + (preview.videosSkip || 0) + "</td></tr>" +
+      "<tr><td>Playlists</td><td>" + (preview.playlists || 0) + "</td></tr>" +
+      "<tr><td>Settings keys</td><td>" + (preview.settingsKeys || 0) + "</td></tr>" +
+      "<tr><td>UI sections</td><td>" + escapeHTML((preview.uiSections || []).join(", ") || "none") + "</td></tr>" +
+      "<tr><td>Exported at</td><td>" + escapeHTML(preview.exportedAt || "") + "</td></tr>" +
+      "</tbody></table>" +
+      (preview.machineNote ? "<p class=\"muted-text\">" + escapeHTML(preview.machineNote) + "</p>" : "");
+    el("bundle-apply-btn").classList.remove("hidden");
+    setStatus("bundle-status", "Preview ready — nothing has been written yet.", "ok");
+  } catch (err) {
+    previewBox.innerHTML = "";
+    setStatus("bundle-status", err.message, "error");
+    showErrorToast(err, "settings");
+  } finally {
+    input.value = "";
+  }
+});
+
+el("bundle-apply-btn").addEventListener("click", async () => {
+  if (!state.importBundle) return;
+  const button = el("bundle-apply-btn");
+  button.disabled = true;
+  setStatus("bundle-status", "Applying import…");
+  try {
+    const result = await api("POST", "/api/import/apply", state.importBundle);
+    el("bundle-import-preview").innerHTML =
+      "<p class=\"status-line ok\">Import applied: " + (result.videosApplied || 0) + " videos applied, " +
+      (result.videosSkipped || 0) + " skipped, " + (result.playlistsApplied || 0) + " playlists, " +
+      (result.settingsApplied || 0) + " settings" +
+      ((result.uiSections && result.uiSections.length)
+        ? ", sections: " + escapeHTML(result.uiSections.join(", "))
+        : "") + ".</p>";
+    button.classList.add("hidden");
+    state.importBundle = null;
+    setStatus("bundle-status", "Import complete.", "ok");
+    showToast("Bundle imported", "ok");
+    state.videosLoaded = false;
+    state.accounts = null;
+    loadStatus();
+  } catch (err) {
+    setStatus("bundle-status", err.message, "error");
+    showErrorToast(err, "settings");
+  } finally {
+    button.disabled = false;
   }
 });
